@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ResearchRun {
+  id        String   @id @default(cuid())
+  tool      String
+  label     String
+  status    String
+  inputs    Json
+  output    Json
+  createdAt DateTime @default(now())
+}
