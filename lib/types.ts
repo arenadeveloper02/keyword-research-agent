@@ -66,6 +66,13 @@ export interface ScoredKeyword {
   score: number | null;
 }
 
+export interface CompositeCandidate {
+  keyword: string;
+  volume: number | null;
+  position: number | null;
+  cpc: number | null;
+}
+
 export interface ResultPayload {
   primary: PrimaryKeyword[];
   secondary: SecondaryKeyword[];
@@ -91,6 +98,7 @@ export interface SavedRunOutput {
   exaResults?: ExaResult[];
   normalizedKeywords?: NormalizedKeyword[];
   compositeScores?: ScoredKeyword[];
+  compositeCandidates?: CompositeCandidate[];
   alignmentScores?: ScoredKeyword[];
 }
 
@@ -109,5 +117,6 @@ export interface PdfExportData {
   exaResults?: ExaResult[];
   normalizedKeywords?: NormalizedKeyword[];
   compositeScores?: ScoredKeyword[];
+  compositeCandidates?: CompositeCandidate[];
   alignmentScores?: ScoredKeyword[];
 }

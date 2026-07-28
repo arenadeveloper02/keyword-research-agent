@@ -27,6 +27,8 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
   const fmt = (n: number | null): string => (n === null ? '—' : n.toLocaleString('en-US'));
   const fmtScore = (n: number | null): string =>
     n === null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const fmtCpc = (n: number | null): string =>
+    n === null ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const ensureSpace = (needed: number): void => {
     if (y + needed > pageHeight - margin) {
@@ -143,8 +145,8 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
         autoTable(doc, {
           startY: y,
           margin: { left: margin, right: margin },
-          head: [['Keyword', 'Volume', 'Difficulty']],
-          body: (u.keywordsFound ?? []).map((k) => [k.keyword, fmt(k.volume), fmt(k.difficulty)]),
+          head: [['Keyword', 'Volume']],
+          body: (u.keywordsFound ?? []).map((k) => [k.keyword, fmt(k.volume)]),
           styles: { fontSize: 8, cellPadding: 4 },
           headStyles: { fillColor: [100, 116, 139] },
           rowPageBreak: 'avoid',
@@ -174,40 +176,18 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     y = getFinalY(doc, y) + 28;
   }
 
-  // 2e. Exa research results
-  if (data.exaResults && data.exaResults.length > 0) {
-    ensureSpace(50);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.text('Exa Research', margin, y);
-    y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['Title', 'URL', 'Summary']],
-      body: data.exaResults.map((r) => [r.title ?? '—', r.url, r.snippet ?? '']),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [100, 116, 139] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
-  }
-
-  // 2f. Composite scoring
-  if (data.compositeScores && data.compositeScores.length > 0) {
+  // 2e. Composite scoring — Keyword | Volume | Position | CPC (matches the on-screen panel).
+  if (data.compositeCandidates && data.compositeCandidates.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text('Composite Scoring', margin, y);
     y += 10;
-    const sortedComposite = [...data.compositeScores].sort(
-      (a, b) => (b.score ?? Number.NEGATIVE_INFINITY) - (a.score ?? Number.NEGATIVE_INFINITY)
-    );
     autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
-      head: [['Keyword', 'Score']],
-      body: sortedComposite.map((k) => [k.keyword, fmtScore(k.score)]),
+      head: [['Keyword', 'Volume', 'Position', 'CPC']],
+      body: data.compositeCandidates.map((c) => [c.keyword, fmt(c.volume), fmt(c.position), fmtCpc(c.cpc)]),
       styles: { fontSize: 8, cellPadding: 4 },
       headStyles: { fillColor: [100, 116, 139] },
       rowPageBreak: 'avoid',
@@ -215,7 +195,7 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     y = getFinalY(doc, y) + 28;
   }
 
-  // 2g. Alignment scores
+  // 2f. Alignment scores
   if (data.alignmentScores && data.alignmentScores.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
@@ -253,7 +233,7 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.setTextColor(90, 90, 90);
-    doc.text(`Volume: ${fmt(k.volume)}    Difficulty: ${fmt(k.difficulty)}`, margin, y);
+    doc.text(`Volume: ${fmt(k.volume)}`, margin, y);
     y += 13;
     if (rationaleLines.length > 0) {
       doc.setTextColor(50, 50, 50);
@@ -273,8 +253,8 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
-    head: [['Keyword', 'Volume', 'Difficulty']],
-    body: data.secondary.map((k) => [k.keyword, fmt(k.volume), fmt(k.difficulty)]),
+    head: [['Keyword', 'Volume']],
+    body: data.secondary.map((k) => [k.keyword, fmt(k.volume)]),
     styles: { fontSize: 9, cellPadding: 5 },
     headStyles: { fillColor: [79, 70, 229] },
     rowPageBreak: 'avoid',
@@ -307,8 +287,8 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
       autoTable(doc, {
         startY: y,
         margin: { left: margin, right: margin },
-        head: [['Keyword', 'Volume', 'Difficulty', 'URL Frequency']],
-        body: tier.rows.map((k) => [k.keyword, fmt(k.volume), fmt(k.difficulty), String(k.urlFrequency)]),
+        head: [['Keyword', 'Volume', 'URL Frequency']],
+        body: tier.rows.map((k) => [k.keyword, fmt(k.volume), String(k.urlFrequency)]),
         styles: { fontSize: 8, cellPadding: 4 },
         headStyles: { fillColor: [100, 116, 139] },
         rowPageBreak: 'avoid',

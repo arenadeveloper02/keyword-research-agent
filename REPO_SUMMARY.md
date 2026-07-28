@@ -1,22 +1,23 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-28T07:10:02.053Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-28T07:37:00.849Z.
 
 ## Overview
 
-Keyword Research — live streaming keyword research that expands a seed keyword into a validated, competitor-backed shortlist with full pipeline visibility.
+Keyword Research — live streaming keyword research that expands a seed keyword into a validated, competitor-backed shortlist.
 
 **Repository:** `keyword-research-agent`  
 **File count:** 40
 
 ## Features
 
-- Two-step init → SSE stream flow with single-use tokens
-- Default-message SSE consumer (blockId/chunk progress, embedded final marker, [DONE] terminator)
-- All 14 pipeline outputs rendered: variants, SERP, URL scoring, SEMrush, dedup, Exa, composite, alignment, shortlists, validation warnings
-- Persisted run restore via Prisma/Neon
-- PDF export covering every panel
-- SEMrush balance widget and iframe postMessage notifications
+- Single onmessage SSE consumer matching the real wire format ({blockId,chunk} progress, event:'final' payload field, data:"[DONE]" terminator)
+- Robust extraction of all 14 selectedOutputs with dotted-key and blockId fallback accessors
+- URL Scoring panel bound to selectedUrls[].score rendered as-is
+- Composite Scoring panel with Keyword | Volume | Position | CPC columns from candidates
+- Exa Research panel removed from UI and PDF while kept in the request contract
+- KD badges and Difficulty columns removed per UI fixes
+- Persisted run restore, SEMrush balance widget, PDF export, and iframe postMessage notifications intact
 
 ## Tech Stack
 
@@ -143,7 +144,7 @@ Keyword Research — live streaming keyword research that expands a seed keyword
 
 ## Latest Change
 
-- **Updated at:** 2026-07-28T07:10:02.053Z
+- **Updated at:** 2026-07-28T07:37:00.849Z
 - **Request:** EDIT the existing generated Next.js app IN PLACE in the same repository — do NOT create a new repo, do NOT regenerate from scratch. Apply the targeted fixes below and keep every other prompt requirement, UI panel, and file unchanged.
 
 === CRITICAL BUG TO FIX: SSE STREAM CONSUMER USES WRONG WIRE FORMAT ===
@@ -176,11 +177,11 @@ The final `event:final` payload's `.data.output` object contains results for the
 The 14 fields and how each must surface in the UI:
 1. queryexpansion.variants → "Query Variants" panel: seed keyword as ★ pill, then one pill per variant; subtitle "Generated N commercial query variants".
 2. serpfetch.result → "SERP Results" panel: list of fetched SERP entries (rank, title, domain/URL) grouped/ordered as returned.
-3. urlscoring&selection.result → "URL Scoring" panel: numbered cards (1..N): purple number badge, domain (bold), page title, green "page" badge, optional "X/Y queries" badge, score right-aligned (e.g. 0.97). Subtitle "Selected top N pages from M candidates".
+3. urlscoring&selection.result → "URL Scoring" panel: numbered cards (1..N): purple number badge, domain (bold), page title, green "page" badge, optional "X/Y queries" badge, score right-aligned. Subtitle "Selected top N pages from M candidates".
 4. aggregatesemrushrows.result → "SEMrush Keywords" panel: group BY competitor URL (header = URL ✓ + link + right-aligned "N keywords"); keyword pills = keyword + inline volume (1.0k / 60.5k / 0 muted). Subtitle "Collected N keywords across all pages".
 5. dedup&volumenormalize.result → "Deduplicated & Normalized Keywords" panel: unified keyword list with normalized volume (thousands separators + optional k). Show count "N unique keywords".
-6. exasearch.results → "Exa Research" panel: list of Exa result entries (title, url, snippet/summary if present) as returned.
-7. compositescoring.result → "Composite Scoring" panel: keyword rows with composite score right-aligned; sort by score desc if scores present.
+6. exasearch.results → (do NOT render — see ROUND 2 fix #2 below; still request it in the contract).
+7. compositescoring.result → "Composite Scoring" panel: see ROUND 2 fix #3 for the exact columns.
 8. alignmentscoring.scores → "Alignment Scores" panel: keyword/entity rows with their alignment score (coerce numeric to number|null, "—" for null).
 9. aishortlisting.primary → part of "Primary Keywords" section: one card per primary keyword: title, PRIMARY purple badge, "Search Volume" + big number, rationale.
 10. aishortlisting.secondary → part of "Secondary Keywords" section: table # | KEYWORD | VOLUME, one row per keyword, volume right-aligned.
@@ -194,7 +195,24 @@ The 14 fields and how each must surface in the UI:
 - Coerce numerics to number|null, render "—" for null. Format volumes with thousands separators + optional k (1,000 / 60.5k / 110,000).
 - Never crash on partial data — show a skeleton until the panel's data arrives; if a field is missing from the final payload, show an empty-state for that panel.
 - Seed form: "Seed Keyword" input; "Page Intent" as two selectable cards (Commercial/Transactional — Service pages, pricing, booking; Informational/Educational — Guides, FAQs, how-to content); Start Research + Reset.
-- PDF export MUST include ALL 14 fields' panels. Keep dark theme, spacing, and badge colors (green = done/relevant/selected, purple = primary/number badges, amber = warnings).
+- PDF export MUST include the rendered panels. Keep dark theme, spacing, and badge colors (green = done/relevant/selected, purple = primary/number badges, amber = warnings).
+
+=== UI FIXES ROUND 2 (AUTHORITATIVE — these OVERRIDE any conflicting instruction above; apply surgically, change nothing else) ===
+
+FIX 1 — URL SCORING PANEL score renders 0.00 for every row (BUG). The data lives at the URL-scoring output's `.selectedUrls` array — NOT at `.result` directly. Each entry has: { url, title, snippet, position, domain, score, scoreBreakdown:{positionScore,typeScore,overlapScore,intentScore} }, where `score` is a NUMBER (already rounded to 2 decimals, roughly 20–95). Fix the accessor and binding:
+  const uScore = out["urlscoring&selection.result"] || out["urlscoring&selection"]?.result || (any blockId entry whose value has a `selectedUrls` array);
+  const rows = uScore?.selectedUrls || [];
+  for each entry: render score = Number(entry.score); DISPLAY IT AS-IS (e.g. 72.35), do NOT divide by 100, do NOT read entry.finalScore / entry.compositeScore / entry.relevanceScore (those do not exist). Optional "X/Y queries" badge may use entry.scoreBreakdown when present. Subtitle count from rows.length and uScore.urls?.length.
+
+FIX 2 — Remove the "Exa Research" panel ENTIRELY from the results column AND from the PDF export. Keep exasearch.results in the selectedOutputs contract (do NOT remove it from the request body) — simply render nothing for it.
+
+FIX 3 — COMPOSITE SCORING PANEL: show ONLY these FOUR columns, in this exact order: Keyword | Volume | Position | CPC. The data is at the composite-scoring output's `.candidates` array; each candidate has { keyword, volume, position, cpc, ...ignore the rest }. Bind: Keyword→candidate.keyword, Volume→candidate.volume (volume-formatted with thousands separators), Position→candidate.position, CPC→candidate.cpc (format as a currency/number, "—" if null). REMOVE every other column from this table (difficulty, urlFrequency, volumeScore, alignmentScore, compositeScore, etc.). Access candidates via: (out["compositescoring.result"]?.candidates) || (out["compositescoring"]?.result?.candidates) || [].
+
+FIX 4 — "ALL SOURCE KEYWORDS" panel (the SEMrush / deduplicated keywords table): REMOVE the Difficulty column entirely — drop both the column header AND the per-row difficulty cell. Leave all other columns intact.
+
+FIX 5 — "Final Results" section: REMOVE the literal "KD —" text/label wherever it appears on the primary/secondary keyword cards (delete the KD label and its dash placeholder entirely).
+
+FIX 6 — "Secondary Keywords" table: REMOVE the literal "KD —" text/label from every row (delete the KD label/column/cell entirely).
 
 === DO NOT CHANGE ===
-Do not alter the two-step init→stream flow, the form, the tiering logic, the persisted-run restore, the iframe embedding notifications, or the theme/layout beyond adding the new panels above. This is a surgical edit of the stream consumer, the server-side hardcoded values (API key + full 14-item selectedOutputs), and the results rendering (add coverage for all 14 fields) ONLY.
+Do not alter the two-step init→stream flow, the form, the tiering logic, the persisted-run restore, the iframe embedding notifications, or the theme/layout beyond the fixes above. This is a surgical edit of the stream consumer, the server-side hardcoded values (API key + full 14-item selectedOutputs), and the results rendering (all 14 fields plus ROUND 2 fixes 1-6) ONLY.

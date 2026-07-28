@@ -54,7 +54,6 @@ export default function SourceKeywordsPanel({ keywords }: SourceKeywordsPanelPro
                       <tr>
                         <th className="px-3 py-2 font-medium">Keyword</th>
                         <th className="px-3 py-2 text-right font-medium">Volume</th>
-                        <th className="px-3 py-2 text-right font-medium">Difficulty</th>
                         <th className="px-3 py-2 text-right font-medium">URL freq.</th>
                       </tr>
                     </thead>
@@ -63,7 +62,6 @@ export default function SourceKeywordsPanel({ keywords }: SourceKeywordsPanelPro
                         <tr key={`${tier.name}-${k.keyword}`}>
                           <td className="px-3 py-1.5 text-slate-800">{k.keyword}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{fmt(k.volume)}</td>
-                          <td className="px-3 py-1.5 text-right text-slate-500">{fmt(k.difficulty)}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{k.urlFrequency}</td>
                         </tr>
                       ))}
