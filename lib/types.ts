@@ -38,6 +38,9 @@ export interface CompetitorUrl {
   score: number;
   keywordsFound?: SourceKeyword[];
   status: 'pending' | 'fetching' | 'done' | 'error';
+  title?: string | null;
+  matchedQueries?: number | null;
+  totalQueries?: number | null;
 }
 
 export interface ResultPayload {
@@ -67,4 +70,6 @@ export interface PdfExportData {
   primary: PrimaryKeyword[];
   secondary: SecondaryKeyword[];
   allKeywords: SourceKeyword[];
+  variants?: string[];
+  urls?: CompetitorUrl[];
 }

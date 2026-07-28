@@ -14,7 +14,9 @@ import type {
 } from '@/lib/types';
 import ResearchForm from '@/components/ResearchForm';
 import ProgressTracker from '@/components/ProgressTracker';
+import QueryVariantsPanel from '@/components/QueryVariantsPanel';
 import CompetitorUrlsPanel from '@/components/CompetitorUrlsPanel';
+import SemrushKeywordsPanel from '@/components/SemrushKeywordsPanel';
 import SourceKeywordsPanel from '@/components/SourceKeywordsPanel';
 import ResultsSection from '@/components/ResultsSection';
 import SemrushBalanceWidget from '@/components/SemrushBalanceWidget';
@@ -44,7 +46,7 @@ const ALL_DONE_STAGES: Record<Stage, StageStatus> = {
   validation: 'done',
 };
 
-// Known upstream block-id prefixes mapped to pipeline stages / result payloads.
+// Known upstream block-id prefixes mapped to result payloads.
 const SHORTLIST_BLOCK_PREFIX = '40141cd2';
 const ALIGNMENT_BLOCK_PREFIX = '2d472f89';
 
@@ -120,7 +122,17 @@ function coerceUrls(v: unknown): CompetitorUrl[] {
           domain = url;
         }
       }
-      return { url, domain, score: toNumOrNull(o.score) ?? 0, status: 'pending' as const };
+      const keywords = Array.isArray(o.keywords) ? coerceSource(o.keywords) : undefined;
+      return {
+        url,
+        domain,
+        score: toNumOrNull(o.score) ?? 0,
+        title: typeof o.title === 'string' ? o.title : null,
+        matchedQueries: toNumOrNull(o.matchedQueries) ?? toNumOrNull(o.queries),
+        totalQueries: toNumOrNull(o.totalQueries),
+        keywordsFound: keywords && keywords.length > 0 ? keywords : undefined,
+        status: 'done' as const,
+      };
     })
     .filter((u) => u.url.length > 0);
 }
@@ -186,10 +198,11 @@ export default function KeywordResearchClient() {
   const esRef = useRef<EventSource | null>(null);
   const finishedRef = useRef(false);
   const startedRef = useRef(false);
-  // Set once "[DONE]" or the embedded final marker arrives — a socket close after
-  // this point is SUCCESS, never a connection error.
+  // Set once "[DONE]" or the embedded {event:"final"} marker arrives — a socket
+  // close after this point is SUCCESS, never a connection error.
   const completionRef = useRef(false);
   const seenBlocksRef = useRef<Set<string>>(new Set());
+  const chunkBuffersRef = useRef<Map<string, string>>(new Map());
   const resultRef = useRef<ResultPayload | null>(null);
   const allKeywordsRef = useRef<SourceKeyword[]>([]);
   const inputsRef = useRef<RunInputs | null>(null);
@@ -274,6 +287,8 @@ export default function KeywordResearchClient() {
     setInitError(null);
     resultRef.current = null;
     allKeywordsRef.current = [];
+    seenBlocksRef.current = new Set();
+    chunkBuffersRef.current = new Map();
   }
 
   async function persistRun(inputs: RunInputs) {
@@ -303,6 +318,7 @@ export default function KeywordResearchClient() {
   }
 
   function finalizeSuccess(inputs: RunInputs) {
+    completionRef.current = true;
     if (finishedRef.current) return;
     finishedRef.current = true;
     closeStream();
@@ -339,134 +355,116 @@ export default function KeywordResearchClient() {
     }
   }
 
-  // Marks every stage before `target` done and `target` active.
-  function markStageReached(target: Stage) {
-    setStages((prev) => {
-      const idx = STAGE_KEYS.indexOf(target);
-      if (idx < 0) return prev;
-      const next = { ...prev };
-      STAGE_KEYS.forEach((k, i) => {
-        if (i < idx) next[k] = 'done';
-        else if (i === idx && next[k] !== 'done') next[k] = 'active';
-      });
-      return next;
+  function mergeVariants(next: string[]) {
+    setVariants((prev) => {
+      const merged = [...prev];
+      for (const v of next) {
+        if (v && !merged.includes(v)) merged.push(v);
+      }
+      return merged.length === prev.length ? prev : merged;
     });
   }
 
-  // Best-effort: a chunk that happens to be complete JSON may carry variants,
-  // competitor URLs, or keyword lists. Anything else is silently ignored.
-  function applyChunkPayload(p: unknown) {
-    if (Array.isArray(p)) {
-      if (p.length > 0 && p.every((v) => typeof v === 'string')) {
-        setVariants(p.filter((v): v is string => typeof v === 'string'));
-        return;
-      }
-      const first = asRecord(p[0]);
-      if (typeof first.url === 'string') {
-        const u = coerceUrls(p);
-        if (u.length > 0) setUrls(u);
-        return;
-      }
-      if (typeof first.keyword === 'string') {
-        const k = coerceSource(p);
-        if (k.length > 0) {
-          allKeywordsRef.current = k;
-          setAllKeywords(k);
+  function mergeUrls(candidates: CompetitorUrl[]) {
+    setUrls((prev) => {
+      const map = new Map(prev.map((u) => [u.url, u] as const));
+      let changed = false;
+      for (const u of candidates) {
+        const existing = map.get(u.url);
+        if (!existing) {
+          map.set(u.url, u);
+          changed = true;
+        } else if (u.keywordsFound && u.keywordsFound.length > 0 && (!existing.keywordsFound || existing.keywordsFound.length === 0)) {
+          map.set(u.url, { ...existing, keywordsFound: u.keywordsFound, status: 'done' });
+          changed = true;
         }
       }
+      return changed ? Array.from(map.values()) : prev;
+    });
+  }
+
+  // Best-effort extraction of panel data from a parsed progress chunk. Chunks
+  // that do not map cleanly are silently ignored — never crash on partial data.
+  function extractFromChunkValue(v: unknown) {
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) {
+      mergeVariants(v as string[]);
       return;
     }
-    const o = asRecord(p);
-    if (Array.isArray(o.variants)) {
-      const list = o.variants.filter((v): v is string => typeof v === 'string');
-      if (list.length > 0) setVariants(list);
+    const o = asRecord(v);
+    if (Array.isArray(o.variants) && o.variants.every((x) => typeof x === 'string')) {
+      mergeVariants(o.variants as string[]);
     }
-    if (Array.isArray(o.urls)) {
-      const u = coerceUrls(o.urls);
-      if (u.length > 0) setUrls(u);
+    const urlCandidates = coerceUrls(Array.isArray(v) ? v : o.urls ?? o.results ?? o.pages);
+    if (urlCandidates.length > 0) mergeUrls(urlCandidates);
+    const scores = extractScores(v);
+    if (scores.length > 0) {
+      allKeywordsRef.current = scores;
+      setAllKeywords(scores);
     }
-    if (Array.isArray(o.keywords)) {
-      const k = coerceSource(o.keywords);
-      if (k.length > 0) {
-        allKeywordsRef.current = k;
-        setAllKeywords(k);
-      }
-    }
-    if (Array.isArray(o.scores)) {
-      const k = coerceSource(o.scores);
-      if (k.length > 0) {
-        allKeywordsRef.current = k;
-        setAllKeywords(k);
-      }
-    }
-    if (Array.isArray(o.primary) || Array.isArray(o.secondary)) {
-      const shortlist = extractShortlist(o);
-      if (shortlist) {
-        resultRef.current = shortlist;
-        setResult(shortlist);
-      }
+    const shortlist = extractShortlist(v);
+    if (shortlist) {
+      resultRef.current = shortlist;
+      setResult(shortlist);
     }
   }
 
-  // Progress chunks are { blockId, chunk } — advance the tracker per block.
-  function handleProgressChunk(blockId: string, chunk: string) {
-    if (blockId.startsWith(ALIGNMENT_BLOCK_PREFIX)) {
-      seenBlocksRef.current.add(blockId);
-      markStageReached('analysis');
-    } else if (blockId.startsWith(SHORTLIST_BLOCK_PREFIX)) {
-      seenBlocksRef.current.add(blockId);
-      markStageReached('scoring');
-    } else if (!seenBlocksRef.current.has(blockId)) {
-      const isFirstBlock = seenBlocksRef.current.size === 0;
-      seenBlocksRef.current.add(blockId);
-      if (!isFirstBlock) {
-        // Each newly seen block advances the pipeline one step.
-        setStages((prev) => {
-          const next = { ...prev };
-          const activeIdx = STAGE_KEYS.findIndex((k) => next[k] === 'active');
-          if (activeIdx >= 0) next[STAGE_KEYS[activeIdx]] = 'done';
-          const pendingIdx = STAGE_KEYS.findIndex((k) => next[k] === 'pending');
-          if (pendingIdx >= 0) next[STAGE_KEYS[pendingIdx]] = 'active';
-          return next;
+  // Progress chunks have shape {blockId, chunk}. Each newly seen block advances
+  // the tracker one stage; chunk payloads are buffered per block and parsed
+  // opportunistically to populate the live panels.
+  function handleChunk(blockId: string, chunk: string) {
+    const seen = seenBlocksRef.current;
+    if (!seen.has(blockId)) {
+      seen.add(blockId);
+      const activeIndex = Math.min(seen.size - 1, STAGE_KEYS.length - 1);
+      setStages((prev) => {
+        const next: Record<Stage, StageStatus> = { ...prev };
+        STAGE_KEYS.forEach((key, i) => {
+          if (i < activeIndex) next[key] = 'done';
+          else if (i === activeIndex && next[key] === 'pending') next[key] = 'active';
         });
-      }
+        return next;
+      });
     }
-    if (chunk) {
+    if (!chunk) return;
+    const buffers = chunkBuffersRef.current;
+    const combined = (buffers.get(blockId) ?? '') + chunk;
+    buffers.set(blockId, combined);
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(combined);
+    } catch {
       try {
-        const parsed: unknown = JSON.parse(chunk);
-        applyChunkPayload(parsed);
+        parsed = JSON.parse(chunk);
       } catch {
-        // Partial / plain-text chunk — used only for stage advancement.
+        return; // Partial JSON — wait for more chunks.
       }
     }
+    extractFromChunkValue(parsed);
   }
 
   function openStream(token: string, inputs: RunInputs) {
-    const es = new EventSource(`/api/keyword-research/stream/${encodeURIComponent(token)}`);
+    closeStream();
+    setStatus('streaming');
+    setStages({ ...INITIAL_STAGES, variants: 'active' });
+    const es = new EventSource(`/api/keyword-research/stream/${token}`);
     esRef.current = es;
 
     // The upstream emits ONLY default `message` events — no named SSE events.
-    es.onmessage = (ev: MessageEvent) => {
-      const raw: unknown = ev.data;
-      if (typeof raw !== 'string' || raw.length === 0) return;
+    es.onmessage = (event: MessageEvent<string>) => {
       let parsed: unknown;
       try {
-        parsed = JSON.parse(raw);
-      } catch {
-        devWarn('Skipping malformed SSE message', raw);
+        parsed = JSON.parse(event.data);
+      } catch (err) {
+        devWarn('Skipping unparseable SSE message', err);
         return;
       }
-
-      // Terminal signal: the JSON string literal "[DONE]" — the ONLY completion signal.
+      // Terminator: data: "[DONE]" (a JSON string literal). The ONLY completion signal.
       if (parsed === '[DONE]') {
-        completionRef.current = true;
         finalizeSuccess(inputs);
         return;
       }
-
       const o = asRecord(parsed);
-
-      // Final results: {"event":"final","data":{"output":{"<blockId>": ...}}} —
+      // Final result: {"event":"final","data":{"output":{"<blockId>": ...}}} —
       // "final" is a FIELD inside the JSON, not an SSE event name.
       if (o.event === 'final') {
         completionRef.current = true;
@@ -474,88 +472,79 @@ export default function KeywordResearchClient() {
         handleFinalOutput(output);
         return;
       }
-
-      // Progress chunk: {"blockId":"<uuid>","chunk":"<string>"}.
-      if (typeof o.blockId === 'string' && o.blockId.length > 0) {
-        handleProgressChunk(o.blockId, typeof o.chunk === 'string' ? o.chunk : '');
-      }
+      // Progress chunk: {"blockId":"<uuid>","chunk":"<string>"}
+      const blockId = typeof o.blockId === 'string' ? o.blockId : '';
+      const chunk = typeof o.chunk === 'string' ? o.chunk : '';
+      if (blockId) handleChunk(blockId, chunk);
     };
 
     es.onerror = () => {
-      if (finishedRef.current) {
-        closeStream();
+      // A socket close after "[DONE]" or "final" is SUCCESS, never an error.
+      if (completionRef.current || finishedRef.current) {
+        if (!finishedRef.current) finalizeSuccess(inputs);
         return;
       }
-      if (completionRef.current) {
-        // "[DONE]" or "final" already arrived — socket close is SUCCESS, not an error.
-        finalizeSuccess(inputs);
-        return;
-      }
-      finishedRef.current = true;
       closeStream();
-      setFailMessage('Connection to the research stream was lost. Please retry.');
       setStatus('failed');
-      postToParent('keyword-research:finish', { keyword: inputs.keyword, outcome: 'fail' });
+      setFailMessage('Connection to the research stream was lost. Please retry.');
+      postToParent('keyword-research:finish', { keyword: inputs.keyword, outcome: 'error' });
     };
   }
 
   async function startRun() {
-    const trimmedKeyword = keyword.trim();
-    if (!trimmedKeyword) return;
-    closeStream();
-    resetRunState();
+    const trimmed = keyword.trim();
+    if (!trimmed || status === 'initializing' || status === 'streaming') return;
+    startedRef.current = true;
     finishedRef.current = false;
     completionRef.current = false;
-    seenBlocksRef.current = new Set();
-    startedRef.current = true;
     setIsRestored(false);
-    setStatus('initializing');
-
-    const trimmedClient = clientName.trim();
-    const inputs: RunInputs = { keyword: trimmedKeyword, intent, client: trimmedClient || undefined };
+    resetRunState();
+    const inputs: RunInputs = { keyword: trimmed, intent, client: clientName.trim() || undefined };
     inputsRef.current = inputs;
-    postToParent('keyword-research:start', { keyword: trimmedKeyword });
-
+    setStatus('initializing');
+    postToParent('keyword-research:start', { keyword: trimmed });
+    let token = '';
     try {
       const res = await fetch('/api/keyword-research/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: trimmedKeyword, intent, client: trimmedClient }),
+        body: JSON.stringify({ keyword: trimmed, intent, client: clientName.trim() }),
       });
-      const data = (await res.json().catch(() => null)) as { token?: unknown; error?: unknown } | null;
-      if (!res.ok || !data || typeof data.token !== 'string' || data.token.length === 0) {
-        const message =
-          data && typeof data.error === 'string' && data.error
-            ? data.error
-            : 'Could not start the research run. Please try again.';
-        setInitError(message);
+      const data = (await res.json().catch(() => ({}))) as { token?: unknown; error?: unknown };
+      if (!res.ok || typeof data.token !== 'string' || !data.token) {
+        setInitError(typeof data.error === 'string' && data.error ? data.error : 'Could not start the research run.');
         setStatus('idle');
-        postToParent('keyword-research:finish', { keyword: trimmedKeyword, outcome: 'fail' });
         return;
       }
-      setStatus('streaming');
-      setStages({ ...INITIAL_STAGES, variants: 'active' });
-      openStream(data.token, inputs);
+      token = data.token;
     } catch {
-      setInitError('Could not start the research run. Please try again.');
+      setInitError('Could not reach the server to start the run. Check your connection and try again.');
       setStatus('idle');
-      postToParent('keyword-research:finish', { keyword: trimmedKeyword, outcome: 'fail' });
+      return;
     }
+    openStream(token, inputs);
   }
 
-  function handleCancel() {
+  function cancelRun() {
     finishedRef.current = true;
     closeStream();
     setStatus('idle');
-    postToParent('keyword-research:finish', {
-      keyword: inputsRef.current?.keyword ?? keyword,
-      outcome: 'cancelled',
-    });
+    setStages(INITIAL_STAGES);
+    postToParent('keyword-research:finish', { keyword: inputsRef.current?.keyword ?? keyword, outcome: 'cancelled' });
   }
 
-  // Retry always restarts from init — stream tokens are single-use.
-  function handleRetry() {
-    void startRun();
+  function handleReset() {
+    finishedRef.current = true;
+    closeStream();
+    startedRef.current = false;
+    completionRef.current = false;
+    setKeyword('');
+    setClientName('');
+    setIntent('commercial');
+    setStatus('idle');
+    setIsRestored(false);
+    resetRunState();
+    inputsRef.current = null;
   }
 
   function handleResultChange(next: ResultPayload) {
@@ -564,11 +553,10 @@ export default function KeywordResearchClient() {
   }
 
   const running = status === 'initializing' || status === 'streaming';
-  const effectiveInputs: RunInputs =
-    inputsRef.current ?? { keyword: keyword.trim(), intent, client: clientName.trim() || undefined };
+  const hasSemrushKeywords = urls.some((u) => (u.keywordsFound?.length ?? 0) > 0);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-10">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Keyword Research</h1>
@@ -588,29 +576,41 @@ export default function KeywordResearchClient() {
         onKeywordChange={setKeyword}
         onIntentChange={setIntent}
         onClientChange={setClientName}
-        onSubmit={() => {
-          void startRun();
-        }}
-        onCancel={handleCancel}
+        onSubmit={startRun}
+        onCancel={cancelRun}
+        onReset={handleReset}
       />
 
       {isRestored && status === 'complete' && (
-        <p className="text-xs text-slate-400">Restored your last completed run.</p>
+        <p className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+          Restored your last completed run for “{inputsRef.current?.keyword}”.
+        </p>
       )}
 
-      {(running || (status === 'complete' && !isRestored)) && (
-        <ProgressTracker stages={stages} variants={variants} />
+      {running && <ProgressTracker stages={stages} variants={variants} />}
+
+      {status === 'failed' && failMessage && <ErrorCard message={failMessage} onRetry={() => void startRun()} />}
+
+      {variants.length > 0 && (
+        <QueryVariantsPanel
+          seedKeyword={inputsRef.current?.keyword ?? keyword}
+          intent={intent}
+          variants={variants}
+          done={!running}
+        />
       )}
 
-      {urls.length > 0 && <CompetitorUrlsPanel urls={urls} />}
+      {urls.length > 0 && <CompetitorUrlsPanel urls={urls} done={!running} />}
 
-      {status === 'failed' && failMessage && <ErrorCard message={failMessage} onRetry={handleRetry} />}
+      {hasSemrushKeywords && <SemrushKeywordsPanel urls={urls} done={!running} />}
 
-      {result && status === 'complete' && (
+      {result && inputsRef.current && (
         <ResultsSection
           result={result}
-          inputs={effectiveInputs}
+          inputs={inputsRef.current}
           allKeywords={allKeywords}
+          variants={variants}
+          competitorUrls={urls}
           onResultChange={handleResultChange}
         />
       )}

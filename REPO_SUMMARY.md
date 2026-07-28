@@ -1,23 +1,22 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-28T04:24:48.991Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-28T05:16:51.074Z.
 
 ## Overview
 
-Keyword Research — live streaming keyword research that expands a seed keyword into a validated, competitor-backed shortlist.
+Keyword Research — live streaming keyword research that expands a seed keyword into a validated, competitor-backed shortlist with six data panels, persisted runs, and PDF export.
 
 **Repository:** `keyword-research-agent`  
-**File count:** 32
+**File count:** 35
 
 ## Features
 
-- Two-step init→stream flow with single-use tokens
-- Real-wire-format SSE consumer (default message events, [DONE] terminator, embedded final marker)
-- Live pipeline progress tracker with best-effort chunk-to-stage mapping
-- Competitor URLs and all-source keywords panels
-- Editable final results with copy-as-table and PDF export
-- SEMrush balance widget with post-run refresh
-- Persisted run restore via Prisma-backed /api/runs
+- Single onmessage SSE consumer matching the real wire format (data-only messages, embedded final marker, [DONE] terminator)
+- Two-step init → single-use stream token flow with retry-from-init
+- Six data panels: seed form + query variants, URL scoring grid, SEMrush keywords by page, primary keywords, secondary keywords table, all source keywords
+- Live progress tracker fed by {blockId,chunk} progress messages
+- Persisted run restore via Prisma + PDF export covering all panels
+- SEMrush balance widget and iframe postMessage notifications
 
 ## Tech Stack
 
@@ -64,13 +63,16 @@ Keyword Research — live streaming keyword research that expands a seed keyword
 - `components/KeywordResearchClient.tsx`
 - `components/PdfDownloadButton.tsx`
 - `components/ProgressTracker.tsx`
+- `components/QueryVariantsPanel.tsx`
 - `components/ResearchForm.tsx`
 - `components/ResultsSection.tsx`
 - `components/SemrushBalanceWidget.tsx`
+- `components/SemrushKeywordsPanel.tsx`
 - `components/SourceKeywordsPanel.tsx`
 
 ### Libraries
 
+- `lib/format.ts`
 - `lib/pdf.ts`
 - `lib/prisma.ts`
 - `lib/types.ts`
@@ -111,10 +113,13 @@ Keyword Research — live streaming keyword research that expands a seed keyword
 - `components/KeywordResearchClient.tsx`
 - `components/PdfDownloadButton.tsx`
 - `components/ProgressTracker.tsx`
+- `components/QueryVariantsPanel.tsx`
 - `components/ResearchForm.tsx`
 - `components/ResultsSection.tsx`
 - `components/SemrushBalanceWidget.tsx`
+- `components/SemrushKeywordsPanel.tsx`
 - `components/SourceKeywordsPanel.tsx`
+- `lib/format.ts`
 - `lib/pdf.ts`
 - `lib/prisma.ts`
 - `lib/types.ts`
@@ -128,7 +133,7 @@ Keyword Research — live streaming keyword research that expands a seed keyword
 
 ## Latest Change
 
-- **Updated at:** 2026-07-28T04:24:48.991Z
+- **Updated at:** 2026-07-28T05:16:51.074Z
 - **Request:** EDIT the existing generated Next.js app IN PLACE in the same repository — do NOT create a new repo, do NOT regenerate from scratch. Apply the targeted fixes below and keep every other prompt requirement, UI panel, and file unchanged.
 
 === CRITICAL BUG TO FIX: SSE STREAM CONSUMER USES WRONG WIRE FORMAT ===
@@ -160,3 +165,36 @@ The current client consumes the stream with NAMED event listeners: eventSource.a
 
 === DO NOT CHANGE ===
 Do not alter the data contracts, the form, the tiering logic, the PDF export, the persisted-run restore, the iframe embedding notifications, the theme/layout, or any other behavior described in the original spec. This is a surgical edit of the stream consumer and the server-side hardcoded values ONLY.
+
+=== RENDER ALL SIX DATA PANELS (do not drop any) ===
+Populate live from streamed {blockId,chunk} data and finalize from {event:final}.
+Stack in the results column in order. Coerce numerics to number|null, render "—" for null.
+Format volumes with thousands separators + optional k (1,000 / 60.5k / 110,000).
+Never crash on partial data — show a skeleton until the panel's data arrives.
+
+1. Seed form + Query Variants: "Seed Keyword" input; "Page Intent" as two selectable
+   cards (Commercial/Transactional — Service pages, pricing, booking; Informational/
+   Educational — Guides, FAQs, how-to content); Start Research + Reset. After variants:
+   card "Query Variants" ✓ Done, subtitle "Generated N commercial query variants";
+   seed keyword as ★ pill then one pill per variant.
+
+2. URL Scoring: card ✓ Done, subtitle "Selected top N pages from M candidates".
+   Grid of numbered cards (1..N): purple number badge, domain (bold), page title,
+   green "page" badge, optional "2/6 queries" badge, score right-aligned (0.97/0.93).
+
+3. SEMrush Keywords: card ✓ Done, subtitle "Collected N keywords across all pages".
+   Group BY competitor URL (header = URL ✓ + link + right-aligned "N keywords");
+   keyword pills = keyword + inline volume (1.0k / 60.5k / 0 muted).
+
+4. Primary Keywords: section with green "X / Y selected". One card per primary keyword:
+   title, PRIMARY purple badge, "Search Volume" + big number (1,000 / 390), rationale.
+
+5. Secondary Keywords: section with green "X / Y selected". Table # | KEYWORD | VOLUME,
+   one row per keyword, volume right-aligned (720 / 480 / 110,000 / 6,600).
+
+6. All source keywords: collapsible, right-aligned "N available" + chevron (open by
+   default). Two subsections: "Relevant — Appears across 2 competitor pages" and
+   "Discovery — Unique to a single competitor page", each = keyword + right-aligned volume.
+
+PDF export must include all six panels. Keep dark theme, spacing, badge colors
+(green = done/relevant, purple = primary/number badges).

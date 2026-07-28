@@ -1,6 +1,6 @@
 "use client"
 
-import { Loader2, Search, XCircle } from 'lucide-react';
+import { Loader2, RotateCcw, Search, XCircle } from 'lucide-react';
 import type { Intent } from '@/lib/types';
 
 interface ResearchFormProps {
@@ -14,9 +14,13 @@ interface ResearchFormProps {
   onClientChange: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
+  onReset: () => void;
 }
 
-const INTENT_OPTIONS: Intent[] = ['commercial', 'informational'];
+const INTENT_CARDS: { value: Intent; title: string; description: string }[] = [
+  { value: 'commercial', title: 'Commercial / Transactional', description: 'Service pages, pricing, booking' },
+  { value: 'informational', title: 'Informational / Educational', description: 'Guides, FAQs, how-to content' },
+];
 
 export default function ResearchForm({
   keyword,
@@ -29,6 +33,7 @@ export default function ResearchForm({
   onClientChange,
   onSubmit,
   onCancel,
+  onReset,
 }: ResearchFormProps) {
   return (
     <form
@@ -41,7 +46,7 @@ export default function ResearchForm({
       <div className="space-y-5">
         <div>
           <label htmlFor="seed-keyword" className="block text-sm font-medium text-slate-700">
-            Seed keyword <span className="text-rose-500">*</span>
+            Seed Keyword <span className="text-rose-500">*</span>
           </label>
           <input
             id="seed-keyword"
@@ -56,22 +61,30 @@ export default function ResearchForm({
         </div>
 
         <div>
-          <span className="block text-sm font-medium text-slate-700">Intent</span>
-          <div className="mt-1.5 inline-flex rounded-lg border border-slate-300 bg-slate-50 p-0.5" role="group" aria-label="Search intent">
-            {INTENT_OPTIONS.map((option) => (
-              <button
-                key={option}
-                type="button"
-                disabled={running}
-                onClick={() => onIntentChange(option)}
-                aria-pressed={intent === option}
-                className={`rounded-md px-4 py-1.5 text-sm font-medium capitalize transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                  intent === option ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {option}
-              </button>
-            ))}
+          <span className="block text-sm font-medium text-slate-700">Page Intent</span>
+          <div className="mt-1.5 grid gap-3 sm:grid-cols-2" role="group" aria-label="Page intent">
+            {INTENT_CARDS.map((card) => {
+              const selected = intent === card.value;
+              return (
+                <button
+                  key={card.value}
+                  type="button"
+                  disabled={running}
+                  onClick={() => onIntentChange(card.value)}
+                  aria-pressed={selected}
+                  className={`rounded-xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                    selected
+                      ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  } ${running ? 'cursor-not-allowed opacity-60' : ''}`}
+                >
+                  <span className={`block text-sm font-semibold ${selected ? 'text-indigo-700' : 'text-slate-800'}`}>
+                    {card.title}
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">{card.description}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -79,7 +92,6 @@ export default function ResearchForm({
           <label htmlFor="client-brand" className="block text-sm font-medium text-slate-700">
             Client / brand <span className="text-slate-400">(optional)</span>
           </label>
-          {/* TODO: wire this field to the app's client list source (searchable select) once one is specified. */}
           <input
             id="client-brand"
             type="text"
@@ -97,7 +109,7 @@ export default function ResearchForm({
           </p>
         )}
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
             disabled={running || keyword.trim().length === 0}
@@ -111,11 +123,11 @@ export default function ResearchForm({
             ) : (
               <>
                 <Search className="h-4 w-4" aria-hidden="true" />
-                Research Keywords
+                Start Research
               </>
             )}
           </button>
-          {running && (
+          {running ? (
             <button
               type="button"
               onClick={onCancel}
@@ -123,6 +135,15 @@ export default function ResearchForm({
             >
               <XCircle className="h-4 w-4" aria-hidden="true" />
               Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onReset}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+              Reset
             </button>
           )}
         </div>

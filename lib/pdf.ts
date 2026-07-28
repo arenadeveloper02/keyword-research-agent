@@ -69,6 +69,69 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.setTextColor(0, 0, 0);
   }
 
+  // 2b. Query variants
+  if (data.variants && data.variants.length > 0) {
+    ensureSpace(40);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Query Variants', margin, y);
+    y += 16;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    const variantLines = doc.splitTextToSize(data.variants.join('   •   '), contentWidth) as string[];
+    ensureSpace(variantLines.length * 12 + 10);
+    doc.text(variantLines, margin, y);
+    y += variantLines.length * 12 + 16;
+    doc.setTextColor(0, 0, 0);
+  }
+
+  // 2c. Competitor URL scoring + SEMrush keywords by page
+  if (data.urls && data.urls.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Competitor URL Scoring', margin, y);
+    y += 10;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['#', 'Domain', 'URL', 'Score']],
+      body: data.urls.map((u, i) => [String(i + 1), u.domain, u.url, u.score.toFixed(2)]),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [79, 70, 229] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
+
+    const urlsWithKeywords = data.urls.filter((u) => (u.keywordsFound?.length ?? 0) > 0);
+    if (urlsWithKeywords.length > 0) {
+      ensureSpace(30);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text('SEMrush Keywords by Page', margin, y);
+      y += 18;
+      urlsWithKeywords.forEach((u) => {
+        ensureSpace(40);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.text(`${u.domain} — ${u.keywordsFound?.length ?? 0} keywords`, margin, y);
+        y += 8;
+        autoTable(doc, {
+          startY: y,
+          margin: { left: margin, right: margin },
+          head: [['Keyword', 'Volume', 'Difficulty']],
+          body: (u.keywordsFound ?? []).map((k) => [k.keyword, fmt(k.volume), fmt(k.difficulty)]),
+          styles: { fontSize: 8, cellPadding: 4 },
+          headStyles: { fillColor: [100, 116, 139] },
+          rowPageBreak: 'avoid',
+        });
+        y = getFinalY(doc, y) + 18;
+      });
+      y += 8;
+    }
+  }
+
   // 3. Primary keywords — each as its own block
   ensureSpace(30);
   doc.setFont('helvetica', 'bold');

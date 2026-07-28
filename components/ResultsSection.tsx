@@ -2,13 +2,16 @@
 
 import { useState } from 'react';
 import { AlertTriangle, Check, Copy, Pencil } from 'lucide-react';
-import type { PdfExportData, ResultPayload, RunInputs, SourceKeyword } from '@/lib/types';
+import type { CompetitorUrl, PdfExportData, ResultPayload, RunInputs, SourceKeyword } from '@/lib/types';
+import { formatVolume } from '@/lib/format';
 import PdfDownloadButton from '@/components/PdfDownloadButton';
 
 interface ResultsSectionProps {
   result: ResultPayload;
   inputs: RunInputs;
   allKeywords: SourceKeyword[];
+  variants?: string[];
+  competitorUrls?: CompetitorUrl[];
   onResultChange: (result: ResultPayload) => void;
 }
 
@@ -19,7 +22,14 @@ function difficultyBadge(d: number | null): { label: string; className: string }
   return { label: `KD ${d}`, className: 'bg-rose-100 text-rose-700' };
 }
 
-export default function ResultsSection({ result, inputs, allKeywords, onResultChange }: ResultsSectionProps) {
+export default function ResultsSection({
+  result,
+  inputs,
+  allKeywords,
+  variants = [],
+  competitorUrls = [],
+  onResultChange,
+}: ResultsSectionProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [copied, setCopied] = useState(false);
@@ -79,6 +89,8 @@ export default function ResultsSection({ result, inputs, allKeywords, onResultCh
     primary: result.primary,
     secondary: result.secondary,
     allKeywords,
+    variants,
+    urls: competitorUrls,
   };
 
   return (
@@ -115,9 +127,12 @@ export default function ResultsSection({ result, inputs, allKeywords, onResultCh
         </div>
       )}
 
-      <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Primary keywords ({result.primary.length})
-      </h3>
+      <div className="mt-5 flex items-center gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Primary Keywords</h3>
+        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+          {result.primary.length} / {result.primary.length} selected
+        </span>
+      </div>
       <div className="mt-2 grid gap-4 sm:grid-cols-2">
         {result.primary.map((k, i) => {
           const id = `p-${i}`;
@@ -138,19 +153,23 @@ export default function ResultsSection({ result, inputs, allKeywords, onResultCh
                 ) : (
                   <h4 className="text-lg font-semibold text-slate-900">{k.keyword}</h4>
                 )}
-                <button
-                  type="button"
-                  onClick={() => startEdit(id, k.keyword)}
-                  aria-label={`Edit ${k.keyword}`}
-                  className="rounded p-1 text-slate-400 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                >
-                  <Pencil className="h-4 w-4" aria-hidden="true" />
-                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                    Primary
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(id, k.keyword)}
+                    aria-label={`Edit ${k.keyword}`}
+                    className="rounded p-1 text-slate-400 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  >
+                    <Pencil className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                  Vol {k.volume === null ? '—' : k.volume.toLocaleString()}
-                </span>
+              <p className="mt-3 text-xs font-medium uppercase tracking-wide text-slate-400">Search Volume</p>
+              <p className="text-2xl font-bold text-slate-900">{formatVolume(k.volume)}</p>
+              <div className="mt-2">
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${diff.className}`}>{diff.label}</span>
               </div>
               {k.rationale && <p className="mt-3 text-sm leading-relaxed text-slate-600">{k.rationale}</p>}
@@ -159,46 +178,67 @@ export default function ResultsSection({ result, inputs, allKeywords, onResultCh
         })}
       </div>
 
-      <h3 className="mt-6 text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Secondary keywords ({result.secondary.length})
-      </h3>
-      <ul className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200">
-        {result.secondary.map((k, i) => {
-          const id = `s-${i}`;
-          const diff = difficultyBadge(k.difficulty);
-          return (
-            <li key={id} className="flex items-center gap-3 px-4 py-2.5">
-              {editing === id ? (
-                <input
-                  autoFocus
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onBlur={commitEdit}
-                  onKeyDown={handleEditKeyDown}
-                  aria-label="Edit keyword"
-                  className="flex-1 rounded border border-indigo-300 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                />
-              ) : (
-                <span className="flex-1 truncate text-sm text-slate-800">{k.keyword}</span>
-              )}
-              <span className="w-20 shrink-0 text-right text-xs text-slate-500">
-                {k.volume === null ? '—' : k.volume.toLocaleString()}
-              </span>
-              <span className={`w-16 shrink-0 rounded-full px-2 py-0.5 text-center text-xs font-medium ${diff.className}`}>
-                {diff.label}
-              </span>
-              <button
-                type="button"
-                onClick={() => startEdit(id, k.keyword)}
-                aria-label={`Edit ${k.keyword}`}
-                className="rounded p-1 text-slate-400 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="mt-6 flex items-center gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Secondary Keywords</h3>
+        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+          {result.secondary.length} / {result.secondary.length} selected
+        </span>
+      </div>
+      <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-4 py-2 font-medium">#</th>
+              <th className="px-4 py-2 font-medium">Keyword</th>
+              <th className="px-4 py-2 text-right font-medium">Volume</th>
+              <th className="px-4 py-2 text-right font-medium">KD</th>
+              <th className="px-4 py-2 text-right font-medium">
+                <span className="sr-only">Edit</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {result.secondary.map((k, i) => {
+              const id = `s-${i}`;
+              const diff = difficultyBadge(k.difficulty);
+              return (
+                <tr key={id}>
+                  <td className="px-4 py-2.5 text-slate-400">{i + 1}</td>
+                  <td className="px-4 py-2.5">
+                    {editing === id ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={handleEditKeyDown}
+                        aria-label="Edit keyword"
+                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      />
+                    ) : (
+                      <span className="text-slate-800">{k.keyword}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-slate-600">{formatVolume(k.volume)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${diff.className}`}>{diff.label}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(id, k.keyword)}
+                      aria-label={`Edit ${k.keyword}`}
+                      className="rounded p-1 text-slate-400 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
