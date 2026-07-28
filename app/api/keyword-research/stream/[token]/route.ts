@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 // Server-side only — never exposed to the client bundle.
 const UPSTREAM_URL =
   'https://test-agent.thearena.ai/api/workflows/54171ae9-160a-4967-9ac7-8590e6ee561f/execute';
-const API_KEY = 'sk-sim-vJIseojhA6QZk-QL5FgPE159Vzr8-L6h';
+const API_KEY = 'sk-sim-u8VM1oPDuO05H38_Nh6CVvuMUaCfgHmQ';
 
 const SELECTED_OUTPUTS = [
   'aishortlisting.primary',
@@ -13,6 +13,7 @@ const SELECTED_OUTPUTS = [
   'validationpass.secondary',
   'validationpass.warning.type',
   'validationpass.warning.description',
+  'alignmentscoring.scores',
 ];
 
 const TOKEN_TTL_MS = 10 * 60 * 1000;

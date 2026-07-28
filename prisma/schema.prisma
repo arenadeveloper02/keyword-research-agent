@@ -15,4 +15,5 @@ model ResearchRun {
   inputs    Json
   output    Json
   createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 }
