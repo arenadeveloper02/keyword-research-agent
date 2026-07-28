@@ -3,8 +3,8 @@ export const dynamic = 'force-dynamic';
 
 // Server-side only — never exposed to the client bundle.
 const UPSTREAM_URL =
-  'https://test-agent.thearena.ai/api/workflows/54171ae9-160a-4967-9ac7-8590e6ee561f/execute';
-const API_KEY = 'sk-sim-u8VM1oPDuO05H38_Nh6CVvuMUaCfgHmQ';
+  'https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute';
+const API_KEY = 'sk-sim-Vk9yj3QfVSZxJ8lulZTYK549u5ThZo9u';
 
 // The full 14-output contract — exact strings, exact order. Do not trim.
 const SELECTED_OUTPUTS = [
