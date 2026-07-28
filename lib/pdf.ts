@@ -25,6 +25,8 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
   let y = margin;
 
   const fmt = (n: number | null): string => (n === null ? '—' : n.toLocaleString('en-US'));
+  const fmtScore = (n: number | null): string =>
+    n === null ? '—' : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
   const ensureSpace = (needed: number): void => {
     if (y + needed > pageHeight - margin) {
@@ -54,9 +56,11 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
   y += 8;
   doc.setTextColor(0, 0, 0);
 
-  // 2. Warning banner (if present)
-  if (data.warning) {
-    const warningLines = doc.splitTextToSize(`Warning: ${data.warning}`, contentWidth - 20) as string[];
+  // 2. Warning banner (if present) — includes the validation warning type badge text.
+  if (data.warning || data.warningType) {
+    const label = data.warningType ? `Warning (${data.warningType})` : 'Warning';
+    const body = data.warning ?? 'The validation pass raised a warning.';
+    const warningLines = doc.splitTextToSize(`${label}: ${body}`, contentWidth - 20) as string[];
     const boxHeight = warningLines.length * 12 + 16;
     ensureSpace(boxHeight + 16);
     doc.setFillColor(254, 243, 199);
@@ -84,6 +88,25 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.text(variantLines, margin, y);
     y += variantLines.length * 12 + 16;
     doc.setTextColor(0, 0, 0);
+  }
+
+  // 2b2. SERP results
+  if (data.serpResults && data.serpResults.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('SERP Results', margin, y);
+    y += 10;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Rank', 'Title', 'Domain', 'URL']],
+      body: data.serpResults.map((r) => [r.rank === null ? '—' : String(r.rank), r.title ?? '—', r.domain, r.url]),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [100, 116, 139] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
   }
 
   // 2c. Competitor URL scoring + SEMrush keywords by page
@@ -130,6 +153,85 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
       });
       y += 8;
     }
+  }
+
+  // 2d. Deduplicated & normalized keywords
+  if (data.normalizedKeywords && data.normalizedKeywords.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text(`Deduplicated & Normalized Keywords — ${data.normalizedKeywords.length} unique`, margin, y);
+    y += 10;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Keyword', 'Volume']],
+      body: data.normalizedKeywords.map((k) => [k.keyword, fmt(k.volume)]),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [100, 116, 139] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
+  }
+
+  // 2e. Exa research results
+  if (data.exaResults && data.exaResults.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Exa Research', margin, y);
+    y += 10;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Title', 'URL', 'Summary']],
+      body: data.exaResults.map((r) => [r.title ?? '—', r.url, r.snippet ?? '']),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [100, 116, 139] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
+  }
+
+  // 2f. Composite scoring
+  if (data.compositeScores && data.compositeScores.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Composite Scoring', margin, y);
+    y += 10;
+    const sortedComposite = [...data.compositeScores].sort(
+      (a, b) => (b.score ?? Number.NEGATIVE_INFINITY) - (a.score ?? Number.NEGATIVE_INFINITY)
+    );
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Keyword', 'Score']],
+      body: sortedComposite.map((k) => [k.keyword, fmtScore(k.score)]),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [100, 116, 139] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
+  }
+
+  // 2g. Alignment scores
+  if (data.alignmentScores && data.alignmentScores.length > 0) {
+    ensureSpace(50);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Alignment Scores', margin, y);
+    y += 10;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Keyword', 'Alignment']],
+      body: data.alignmentScores.map((k) => [k.keyword, fmtScore(k.score)]),
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [100, 116, 139] },
+      rowPageBreak: 'avoid',
+    });
+    y = getFinalY(doc, y) + 28;
   }
 
   // 3. Primary keywords — each as its own block

@@ -7,9 +7,10 @@ import type { CompetitorUrl } from '@/lib/types';
 interface CompetitorUrlsPanelProps {
   urls: CompetitorUrl[];
   done?: boolean;
+  candidateCount?: number | null;
 }
 
-export default function CompetitorUrlsPanel({ urls, done = false }: CompetitorUrlsPanelProps) {
+export default function CompetitorUrlsPanel({ urls, done = false, candidateCount = null }: CompetitorUrlsPanelProps) {
   const [open, setOpen] = useState(true);
 
   return (
@@ -25,7 +26,10 @@ export default function CompetitorUrlsPanel({ urls, done = false }: CompetitorUr
             URL Scoring
             <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">{urls.length}</span>
           </span>
-          <span className="mt-0.5 block text-xs text-slate-400">Selected top {urls.length} pages</span>
+          <span className="mt-0.5 block text-xs text-slate-400">
+            Selected top {urls.length} pages
+            {typeof candidateCount === 'number' && candidateCount > 0 ? ` from ${candidateCount} candidates` : ''}
+          </span>
         </span>
         <span className="flex items-center gap-2">
           {done ? (

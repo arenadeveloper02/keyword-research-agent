@@ -6,13 +6,21 @@ const UPSTREAM_URL =
   'https://test-agent.thearena.ai/api/workflows/54171ae9-160a-4967-9ac7-8590e6ee561f/execute';
 const API_KEY = 'sk-sim-u8VM1oPDuO05H38_Nh6CVvuMUaCfgHmQ';
 
+// The full 14-output contract — exact strings, exact order. Do not trim.
 const SELECTED_OUTPUTS = [
+  'dedup&volumenormalize.result',
+  'aggregatesemrushrows.result',
+  'queryexpansion.variants',
+  'serpfetch.result',
   'aishortlisting.primary',
   'aishortlisting.secondary',
   'validationpass.primary',
   'validationpass.secondary',
   'validationpass.warning.type',
   'validationpass.warning.description',
+  'exasearch.results',
+  'urlscoring&selection.result',
+  'compositescoring.result',
   'alignmentscoring.scores',
 ];
 

@@ -43,10 +43,34 @@ export interface CompetitorUrl {
   totalQueries?: number | null;
 }
 
+export interface SerpResult {
+  rank: number | null;
+  title: string | null;
+  url: string;
+  domain: string;
+}
+
+export interface ExaResult {
+  title: string | null;
+  url: string;
+  snippet: string | null;
+}
+
+export interface NormalizedKeyword {
+  keyword: string;
+  volume: number | null;
+}
+
+export interface ScoredKeyword {
+  keyword: string;
+  score: number | null;
+}
+
 export interface ResultPayload {
   primary: PrimaryKeyword[];
   secondary: SecondaryKeyword[];
   warning?: string | null;
+  warningType?: string | null;
 }
 
 export interface RunInputs {
@@ -59,7 +83,15 @@ export interface SavedRunOutput {
   primary: PrimaryKeyword[];
   secondary: SecondaryKeyword[];
   warning?: string | null;
+  warningType?: string | null;
   allKeywords?: SourceKeyword[];
+  variants?: string[];
+  urls?: CompetitorUrl[];
+  serpResults?: SerpResult[];
+  exaResults?: ExaResult[];
+  normalizedKeywords?: NormalizedKeyword[];
+  compositeScores?: ScoredKeyword[];
+  alignmentScores?: ScoredKeyword[];
 }
 
 export interface PdfExportData {
@@ -67,9 +99,15 @@ export interface PdfExportData {
   intent: string;
   client: string;
   warning: string | null;
+  warningType?: string | null;
   primary: PrimaryKeyword[];
   secondary: SecondaryKeyword[];
   allKeywords: SourceKeyword[];
   variants?: string[];
   urls?: CompetitorUrl[];
+  serpResults?: SerpResult[];
+  exaResults?: ExaResult[];
+  normalizedKeywords?: NormalizedKeyword[];
+  compositeScores?: ScoredKeyword[];
+  alignmentScores?: ScoredKeyword[];
 }

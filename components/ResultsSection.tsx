@@ -2,7 +2,17 @@
 
 import { useState } from 'react';
 import { AlertTriangle, Check, Copy, Pencil } from 'lucide-react';
-import type { CompetitorUrl, PdfExportData, ResultPayload, RunInputs, SourceKeyword } from '@/lib/types';
+import type {
+  CompetitorUrl,
+  ExaResult,
+  NormalizedKeyword,
+  PdfExportData,
+  ResultPayload,
+  RunInputs,
+  ScoredKeyword,
+  SerpResult,
+  SourceKeyword,
+} from '@/lib/types';
 import { formatVolume } from '@/lib/format';
 import PdfDownloadButton from '@/components/PdfDownloadButton';
 
@@ -12,6 +22,13 @@ interface ResultsSectionProps {
   allKeywords: SourceKeyword[];
   variants?: string[];
   competitorUrls?: CompetitorUrl[];
+  serpResults?: SerpResult[];
+  exaResults?: ExaResult[];
+  normalizedKeywords?: NormalizedKeyword[];
+  compositeScores?: ScoredKeyword[];
+  alignmentScores?: ScoredKeyword[];
+  primaryCandidates?: number | null;
+  secondaryCandidates?: number | null;
   onResultChange: (result: ResultPayload) => void;
 }
 
@@ -28,6 +45,13 @@ export default function ResultsSection({
   allKeywords,
   variants = [],
   competitorUrls = [],
+  serpResults = [],
+  exaResults = [],
+  normalizedKeywords = [],
+  compositeScores = [],
+  alignmentScores = [],
+  primaryCandidates = null,
+  secondaryCandidates = null,
   onResultChange,
 }: ResultsSectionProps) {
   const [editing, setEditing] = useState<string | null>(null);
@@ -86,12 +110,21 @@ export default function ResultsSection({
     intent: inputs.intent,
     client: inputs.client ?? '',
     warning: result.warning ?? null,
+    warningType: result.warningType ?? null,
     primary: result.primary,
     secondary: result.secondary,
     allKeywords,
     variants,
     urls: competitorUrls,
+    serpResults,
+    exaResults,
+    normalizedKeywords,
+    compositeScores,
+    alignmentScores,
   };
+
+  const primaryTotal = primaryCandidates ?? result.primary.length;
+  const secondaryTotal = secondaryCandidates ?? result.secondary.length;
 
   return (
     <section className="animate-rise rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -117,20 +150,27 @@ export default function ResultsSection({
         </div>
       </div>
 
-      {result.warning && (
+      {(result.warning || result.warningType) && (
         <div
           role="alert"
           className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>{result.warning}</span>
+          <span>
+            {result.warningType && (
+              <span className="mr-2 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+                {result.warningType}
+              </span>
+            )}
+            {result.warning ?? 'The validation pass raised a warning.'}
+          </span>
         </div>
       )}
 
       <div className="mt-5 flex items-center gap-2">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Primary Keywords</h3>
         <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-          {result.primary.length} / {result.primary.length} selected
+          {result.primary.length} / {primaryTotal} selected
         </span>
       </div>
       <div className="mt-2 grid gap-4 sm:grid-cols-2">
@@ -181,7 +221,7 @@ export default function ResultsSection({
       <div className="mt-6 flex items-center gap-2">
         <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Secondary Keywords</h3>
         <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-          {result.secondary.length} / {result.secondary.length} selected
+          {result.secondary.length} / {secondaryTotal} selected
         </span>
       </div>
       <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
