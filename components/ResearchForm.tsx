@@ -37,7 +37,7 @@ export default function ResearchForm({
 }: ResearchFormProps) {
   return (
     <form
-      className="mx-auto w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+      className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
       onSubmit={(e) => {
         e.preventDefault();
         if (!running) onSubmit();
@@ -118,7 +118,7 @@ export default function ResearchForm({
             {running ? (
               <>
                 <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
-                Researching…
+                Researching\u2026
               </>
             ) : (
               <>

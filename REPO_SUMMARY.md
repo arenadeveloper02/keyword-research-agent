@@ -1,22 +1,22 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-28T11:22:34.167Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-29T11:43:18.038Z.
 
 ## Overview
 
-Live streaming keyword research agent — expands a seed keyword into a validated, competitor-backed shortlist via the Arena pipeline, with Arena DS theming and PDF export.
+Keyword Research — expand a seed keyword into a validated, competitor-backed shortlist with live pipeline streaming.
 
 **Repository:** `keyword-research-agent`  
 **File count:** 46
 
 ## Features
 
-- Streaming keyword research pipeline with live stage progress
-- Arena Design System theme (brand blue, Poppins, DS tokens)
-- Competitor SERP, URL scoring, SEMrush keyword panels
-- Composite and alignment scoring tables
-- Editable primary/secondary keyword results with copy + PDF export
-- Run persistence and restore via Neon Postgres (Prisma)
+- Full-screen research form shown by default with no restored responses
+- Fresh, cleared state on every page load — results only appear after a new run
+- Live streaming pipeline progress with stage tracking
+- Competitor URL scoring, SEMrush keywords, dedup, composite and alignment panels
+- Editable final results with copy-as-table and PDF export
+- Runs persisted to Postgres for auditing (no auto-restore)
 
 ## Tech Stack
 
@@ -156,12 +156,6 @@ Live streaming keyword research agent — expands a seed keyword into a validate
 
 ## Latest Change
 
-- **Updated at:** 2026-07-28T11:22:34.167Z
-- **Request:** change the theme, 
-
-change the base URL from https://test-agent.thearena.ai/
-to    https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute
-
-
-and change the API key to 
-sk-sim-Vk9yj3QfVSZxJ8lulZTYK549u5ThZo9u
+- **Updated at:** 2026-07-29T11:43:18.038Z
+- **Request:** By default, clear the responses. By default, the values are shown... 
+Make the form full screen
