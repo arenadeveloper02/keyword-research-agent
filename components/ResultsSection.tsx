@@ -14,6 +14,7 @@ import type {
   SourceKeyword,
 } from '@/lib/types';
 import { formatVolume } from '@/lib/format';
+import { copyResultTable } from '@/lib/copy-table';
 import PdfDownloadButton from '@/components/PdfDownloadButton';
 
 interface ResultsSectionProps {
@@ -82,17 +83,10 @@ export default function ResultsSection({
   }
 
   async function handleCopy() {
-    const lines: string[] = ['Type\tKeyword\tVolume\tRationale'];
-    result.primary.forEach((k) =>
-      lines.push(`Primary\t${k.keyword}\t${k.volume ?? ''}\t${(k.rationale ?? '').replace(/\s+/g, ' ')}`)
-    );
-    result.secondary.forEach((k) => lines.push(`Secondary\t${k.keyword}\t${k.volume ?? ''}\t`));
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+    const ok = await copyResultTable(result);
+    if (ok) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable — ignore silently.
     }
   }
 

@@ -118,7 +118,7 @@ export default function ResearchForm({
             {running ? (
               <>
                 <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
-                Researching\u2026
+                {'Researching…'}
               </>
             ) : (
               <>

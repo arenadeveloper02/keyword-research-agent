@@ -1,14 +1,17 @@
 "use client"
 
-import { AlertTriangle, ArrowLeft, Clock } from 'lucide-react';
-import type { HistoryEntry, Intent, ResultPayload } from '@/lib/types';
+import { useState } from 'react';
+import { AlertTriangle, ArrowLeft, Check, Clock, Copy } from 'lucide-react';
+import type { HistoryEntry, Intent, PdfExportData, ResultPayload } from '@/lib/types';
 import { formatDateTime, formatVolume } from '@/lib/format';
+import { copyResultTable } from '@/lib/copy-table';
 import QueryVariantsPanel from '@/components/QueryVariantsPanel';
 import CompetitorUrlsPanel from '@/components/CompetitorUrlsPanel';
 import DedupKeywordsPanel from '@/components/DedupKeywordsPanel';
 import CompositeScoringPanel from '@/components/CompositeScoringPanel';
 import AlignmentScoresPanel from '@/components/AlignmentScoresPanel';
 import SourceKeywordsPanel from '@/components/SourceKeywordsPanel';
+import PdfDownloadButton from '@/components/PdfDownloadButton';
 
 interface HistoryDetailProps {
   entry: HistoryEntry;
@@ -19,8 +22,10 @@ interface HistoryDetailProps {
 // order: Query Variants, URL Scoring, Deduplicated & Normalized Keywords,
 // Composite Scoring, Alignment Scores, All Source Keywords, then Final results.
 // No editing is allowed here — the generator view remains the only place
-// results can be edited.
+// results can be edited. Copy-as-table and PDF download ARE available so past
+// runs can be exported the same way as fresh ones.
 export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
+  const [copied, setCopied] = useState(false);
   const full = entry.fullOutput;
   const result: ResultPayload | null = full
     ? {
@@ -31,6 +36,34 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
       }
     : entry.output;
   const intentValue: Intent = entry.intent === 'informational' ? 'informational' : 'commercial';
+
+  const pdfData: PdfExportData | null = result
+    ? {
+        keyword: entry.keyword,
+        intent: entry.intent || intentValue,
+        client: entry.client,
+        warning: result.warning ?? null,
+        warningType: result.warningType ?? null,
+        primary: result.primary,
+        secondary: result.secondary,
+        allKeywords: full?.allKeywords ?? [],
+        variants: full?.variants ?? [],
+        urls: full?.urls ?? [],
+        serpResults: full?.serpResults ?? [],
+        normalizedKeywords: full?.normalizedKeywords ?? [],
+        compositeCandidates: full?.compositeCandidates ?? [],
+        alignmentScores: full?.alignmentScores ?? [],
+      }
+    : null;
+
+  async function handleCopy() {
+    if (!result) return;
+    const ok = await copyResultTable(result);
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    }
+  }
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6">
@@ -87,7 +120,29 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
       )}
 
       <section className="animate-rise rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-slate-900">Final results</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-bold text-slate-900">Final results</h2>
+          {result !== null && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4 text-emerald-500" aria-hidden="true" /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" aria-hidden="true" /> Copy as table
+                  </>
+                )}
+              </button>
+              <PdfDownloadButton data={pdfData} />
+            </div>
+          )}
+        </div>
 
         {result === null ? (
           <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">

@@ -71,7 +71,7 @@ export default function HistoryView({ onView }: HistoryViewProps) {
     return (
       <div className="mx-auto flex w-full max-w-5xl items-center justify-center px-4 py-16 text-slate-500">
         <Loader2 className="mr-2 h-5 w-5 motion-safe:animate-spin" aria-hidden="true" />
-        <span className="text-sm">Loading history\u2026</span>
+        <span className="text-sm">{'Loading history…'}</span>
       </div>
     );
   }
@@ -87,7 +87,7 @@ export default function HistoryView({ onView }: HistoryViewProps) {
         <section className="animate-rise rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
           <History className="mx-auto h-8 w-8 text-slate-300" aria-hidden="true" />
           <p className="mt-3 text-sm text-slate-500">
-            No previous runs yet \u2014 generate your first recommendation to see it here.
+            {'No previous runs yet — generate your first recommendation to see it here.'}
           </p>
         </section>
       </div>

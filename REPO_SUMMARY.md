@@ -1,21 +1,21 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-30T08:00:19.806Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-30T08:34:04.778Z.
 
 ## Overview
 
-Keyword Research
+Live streaming keyword research agent that expands a seed keyword into a validated, competitor-backed shortlist with copy-as-table and PDF export, plus a run history view.
 
 **Repository:** `keyword-research-agent`  
-**File count:** 51
+**File count:** 52
 
 ## Features
 
-- Live streaming keyword research pipeline
-- Full pipeline history detail (variants, URL scoring, dedup, composite, alignment, source keywords, final results)
-- Generator starts empty — no auto-restore of previous runs
-- PDF export of results
-- Saved runs persisted via Prisma/Postgres
+- Streaming keyword research pipeline with per-stage progress
+- Copy results as a rich table (TSV + HTML) that pastes into Google Sheets/Excel
+- Download full report as PDF
+- History tab with read-only run detail including Copy as table and PDF export
+- Saved runs persisted in Neon Postgres via Prisma
 
 ## Tech Stack
 
@@ -86,6 +86,7 @@ Keyword Research
 
 - `lib/arena-email-constants.ts`
 - `lib/arena-email.ts`
+- `lib/copy-table.ts`
 - `lib/format.ts`
 - `lib/history.ts`
 - `lib/pdf.ts`
@@ -149,6 +150,7 @@ Keyword Research
 - `components/arena-email-provider.tsx`
 - `lib/arena-email-constants.ts`
 - `lib/arena-email.ts`
+- `lib/copy-table.ts`
 - `lib/format.ts`
 - `lib/history.ts`
 - `lib/pdf.ts`
@@ -165,12 +167,24 @@ Keyword Research
 
 ## Latest Change
 
-- **Updated at:** 2026-07-30T08:00:19.806Z
+- **Updated at:** 2026-07-30T08:34:04.778Z
 - **Request:** Make the following changes only. Do not change any other styling, colors, spacing, copy, or layout beyond what's explicitly listed below.
 
 
-1) The history should be similar to what the output is generated, and it should contain all the values. Should show Query Variants,URL scoring, Deduplicated & Normalized Keywords, Composite Scoring, Alignment Scores, All source keywords, and then the Final results 
+1) Please update the Copy as Table functionality so users can paste it directly into Google Sheets or Excel in a properly formatted table like this
+Add the Copy as table and Download as PDF in the history page on the click of View CTA  as well 
 
 
 
-2) Once the generation tab is clicked, the data should be empty. Now, some random data is showing.
+unicode escape sequences are being rendered as literal text instead of their actual characters. Specifically:
+
+The "Generating…" button shows Generating\u2026 instead of Generating…
+The "Working on "Dental implants" for..." heading shows \u201c and \u201d instead of curly quotes " and "
+
+This means somewhere a string containing raw \uXXXX escape sequences is being inserted into the DOM/JSX as plain text rather than being decoded first — likely because:
+
+The string was JSON.stringify'd twice (double-encoding), or
+A template/label string was defined with escaped unicode inside a raw/non-parsed string (e.g., a Python raw string, or a string read from a .json/.env/config file without proper decoding), or
+The value came from an API response as an already-escaped string and is being displayed without JSON.parse or unescaping.
+
+Please find where these strings originate (search for Generating, Working on, \u2026, \u201c, \u201d in the codebase) and fix the root cause so the actual Unicode characters (…, ", ") are stored/passed instead of their escaped representations. Do NOT just do a find-and-replace patch on the rendered output — trace it back to the source (likely a prompt template, static string constant, or API response parsing step) and fix it there.
