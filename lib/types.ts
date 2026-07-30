@@ -131,4 +131,6 @@ export interface HistoryEntry {
   createdAt: string | null;
   preview: string | null;
   output: ResultPayload | null;
+  // Full saved-run payload (all pipeline sections) when the run was saved locally.
+  fullOutput: SavedRunOutput | null;
 }

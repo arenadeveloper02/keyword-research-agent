@@ -1,22 +1,21 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-30T07:16:20.647Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-30T08:00:19.806Z.
 
 ## Overview
 
-Live streaming keyword research agent with a Generator view and a History tab backed by the Arena buildhistory workflow and saved runs.
+Keyword Research
 
 **Repository:** `keyword-research-agent`  
 **File count:** 51
 
 ## Features
 
-- Streaming keyword research pipeline with live stage progress
-- Generator / History tab toggle in the header area
-- History list with keyword, client, timestamp, and top-pick preview
-- Read-only view of past run outputs
-- PDF export and copy-as-table of final results
-- Saved runs persisted via Prisma ResearchRun model
+- Live streaming keyword research pipeline
+- Full pipeline history detail (variants, URL scoring, dedup, composite, alignment, source keywords, final results)
+- Generator starts empty — no auto-restore of previous runs
+- PDF export of results
+- Saved runs persisted via Prisma/Postgres
 
 ## Tech Stack
 
@@ -166,45 +165,12 @@ Live streaming keyword research agent with a Generator view and a History tab ba
 
 ## Latest Change
 
-- **Updated at:** 2026-07-30T07:16:20.647Z
+- **Updated at:** 2026-07-30T08:00:19.806Z
 - **Request:** Make the following changes only. Do not change any other styling, colors, spacing, copy, or layout beyond what's explicitly listed below.
 
 
-Add a "History" section to this Article Recommendation Agent tool. Requirements:
-
-1. Location & trigger: Add a "History" button/tab in the header area (next to or near the title) that toggles between the main "Generator" view and a "History" view.
-2. What gets saved: Every time the user clicks "Get Recommendations" and a result is generated, save a history entry containing:
-- Target Keyword
-- Client / Brand
-- Timestamp (date + time of generation)
-- The full generated output (the H1, headings, and article recommendations)
-3. History view UI:
-Show entries as a reverse-chronological list (newest first), each as a card showing: keyword, client, timestamp, and a short preview of the H1/title generated.
-Each card should have:
-- A "View" button/click action that loads that entry's full output back into the main results view (read-only, non-editable)
-If there's no history yet, show an empty state message like "No previous runs yet — generate your first recommendation to see it here."
-4. Persistence: Store history using in-memory React state (use useState/array), since browser storage isn't available in this environment. Note in a comment that this resets on page reload, and if the user wants persistence across sessions, they'd need to connect a backend/database.
-5. Styling: Match the existing design — same rounded cards, purple/indigo accent color, clean spacing, and typography already used in the tool.
-
-Keep the existing Generator view and functionality fully intact — just add History as an additional view/tab.
+1) The history should be similar to what the output is generated, and it should contain all the values. Should show Query Variants,URL scoring, Deduplicated & Normalized Keywords, Composite Scoring, Alignment Scores, All source keywords, and then the Final results 
 
 
 
-HIstory API :
-
-curl -X POST \
-  -H "X-API-Key: use the exisiting key " \
-  -H "Content-Type: application/json" \
-  -d '{"email":"example","type":"keyword_research","stream":true,"selectedOutputs":["buildhistory.result"]}' \
-  https://agent.thearena.ai/api/workflows/38458816-0871-4c2f-8545-39654a5530cc/execute
-
-
-
-
-
-For this API :
-https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute
-
-Include email as a parameter in the request body ...
-
-Remove SEMrush units: at the top
+2) Once the generation tab is clicked, the data should be empty. Now, some random data is showing.

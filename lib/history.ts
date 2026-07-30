@@ -1,4 +1,16 @@
-import type { HistoryEntry, PrimaryKeyword, ResultPayload, SecondaryKeyword } from '@/lib/types';
+import type {
+  CompetitorUrl,
+  CompositeCandidate,
+  HistoryEntry,
+  NormalizedKeyword,
+  PrimaryKeyword,
+  ResultPayload,
+  SavedRunOutput,
+  ScoredKeyword,
+  SecondaryKeyword,
+  SerpResult,
+  SourceKeyword,
+} from '@/lib/types';
 
 function asRecord(v: unknown): Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -31,6 +43,14 @@ function parseMaybeJson(v: unknown): unknown {
   return v;
 }
 
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 function coercePrimary(v: unknown): PrimaryKeyword[] {
   return asArray(parseMaybeJson(v))
     .map((item) => {
@@ -58,6 +78,100 @@ function coerceSecondary(v: unknown): SecondaryKeyword[] {
     .filter((k) => k.keyword.length > 0);
 }
 
+function coerceStringArray(v: unknown): string[] {
+  return asArray(parseMaybeJson(v)).filter((x): x is string => typeof x === 'string' && x.length > 0);
+}
+
+function coerceSourceKeywords(v: unknown): SourceKeyword[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        urlFrequency: toNumOrNull(o.urlFrequency) ?? 0,
+        volume: toNumOrNull(o.volume),
+        difficulty: toNumOrNull(o.difficulty),
+        compositeScore: toNumOrNull(o.compositeScore) ?? 0,
+      };
+    })
+    .filter((k) => k.keyword.length > 0);
+}
+
+function coerceCompetitorUrls(v: unknown): CompetitorUrl[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      const url = typeof o.url === 'string' ? o.url : '';
+      const domain = typeof o.domain === 'string' && o.domain.length > 0 ? o.domain : domainOf(url);
+      const kws = coerceSourceKeywords(o.keywordsFound);
+      return {
+        url,
+        domain,
+        score: toNumOrNull(o.score) ?? 0,
+        title: typeof o.title === 'string' ? o.title : null,
+        matchedQueries: toNumOrNull(o.matchedQueries),
+        totalQueries: toNumOrNull(o.totalQueries),
+        keywordsFound: kws.length > 0 ? kws : undefined,
+        status: 'done' as const,
+      };
+    })
+    .filter((u) => u.url.length > 0);
+}
+
+function coerceSerpResults(v: unknown): SerpResult[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      const url = typeof o.url === 'string' ? o.url : '';
+      const domain = typeof o.domain === 'string' && o.domain.length > 0 ? o.domain : domainOf(url);
+      return {
+        rank: toNumOrNull(o.rank),
+        title: typeof o.title === 'string' ? o.title : null,
+        url,
+        domain,
+      };
+    })
+    .filter((r) => r.url.length > 0);
+}
+
+function coerceNormalizedKeywords(v: unknown): NormalizedKeyword[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        volume: toNumOrNull(o.volume),
+      };
+    })
+    .filter((k) => k.keyword.length > 0);
+}
+
+function coerceScoredKeywords(v: unknown): ScoredKeyword[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        score: toNumOrNull(o.score),
+      };
+    })
+    .filter((k) => k.keyword.length > 0);
+}
+
+function coerceCompositeCandidates(v: unknown): CompositeCandidate[] {
+  return asArray(parseMaybeJson(v))
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        volume: toNumOrNull(o.volume),
+        position: toNumOrNull(o.position),
+        cpc: toNumOrNull(o.cpc),
+      };
+    })
+    .filter((c) => c.keyword.length > 0);
+}
+
 function coerceOutput(v: unknown): ResultPayload | null {
   const o = asRecord(parseMaybeJson(v));
   const primary = coercePrimary(o.primary);
@@ -70,6 +184,47 @@ function coerceOutput(v: unknown): ResultPayload | null {
     secondary,
     warning: str(w) ?? str(wRec.description) ?? null,
     warningType: str(o.warningType) ?? str(wRec.type) ?? null,
+  };
+}
+
+// Lenient coercion of the full saved-run output (SavedRunOutput) so History can
+// render every pipeline section a saved run recorded.
+function coerceFullOutput(v: unknown): SavedRunOutput | null {
+  const o = asRecord(parseMaybeJson(v));
+  const primary = coercePrimary(o.primary);
+  const secondary = coerceSecondary(o.secondary);
+  const variants = coerceStringArray(o.variants);
+  const urls = coerceCompetitorUrls(o.urls);
+  const serpResults = coerceSerpResults(o.serpResults);
+  const normalizedKeywords = coerceNormalizedKeywords(o.normalizedKeywords);
+  const compositeCandidates = coerceCompositeCandidates(o.compositeCandidates);
+  const alignmentScores = coerceScoredKeywords(o.alignmentScores);
+  const allKeywords = coerceSourceKeywords(o.allKeywords);
+  const hasAny =
+    primary.length > 0 ||
+    secondary.length > 0 ||
+    variants.length > 0 ||
+    urls.length > 0 ||
+    serpResults.length > 0 ||
+    normalizedKeywords.length > 0 ||
+    compositeCandidates.length > 0 ||
+    alignmentScores.length > 0 ||
+    allKeywords.length > 0;
+  if (!hasAny) return null;
+  const w = parseMaybeJson(o.warning);
+  const wRec = asRecord(w);
+  return {
+    primary,
+    secondary,
+    warning: str(w) ?? str(wRec.description) ?? null,
+    warningType: str(o.warningType) ?? str(wRec.type) ?? null,
+    allKeywords,
+    variants,
+    urls,
+    serpResults,
+    normalizedKeywords,
+    compositeCandidates,
+    alignmentScores,
   };
 }
 
@@ -99,6 +254,7 @@ export function coerceHistoryEntries(v: unknown): HistoryEntry[] {
         o.createdAt ?? o.timestamp ?? o.created_at ?? o.generatedAt ?? o.date
       );
       const output = coerceOutput(o.output ?? o.result ?? o);
+      const fullOutput = coerceFullOutput(o.output ?? o.result ?? o);
       const preview =
         output && output.primary.length > 0
           ? output.primary[0].keyword
@@ -111,6 +267,7 @@ export function coerceHistoryEntries(v: unknown): HistoryEntry[] {
         createdAt,
         preview,
         output,
+        fullOutput,
       };
     })
     .filter((e) => e.keyword.length > 0);

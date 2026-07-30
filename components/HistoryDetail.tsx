@@ -1,18 +1,36 @@
 "use client"
 
 import { AlertTriangle, ArrowLeft, Clock } from 'lucide-react';
-import type { HistoryEntry } from '@/lib/types';
+import type { HistoryEntry, Intent, ResultPayload } from '@/lib/types';
 import { formatDateTime, formatVolume } from '@/lib/format';
+import QueryVariantsPanel from '@/components/QueryVariantsPanel';
+import CompetitorUrlsPanel from '@/components/CompetitorUrlsPanel';
+import DedupKeywordsPanel from '@/components/DedupKeywordsPanel';
+import CompositeScoringPanel from '@/components/CompositeScoringPanel';
+import AlignmentScoresPanel from '@/components/AlignmentScoresPanel';
+import SourceKeywordsPanel from '@/components/SourceKeywordsPanel';
 
 interface HistoryDetailProps {
   entry: HistoryEntry;
   onBack: () => void;
 }
 
-// Read-only view of a past run's output. No editing is allowed here — the
-// generator view remains the only place results can be edited.
+// Read-only view of a past run, mirroring the generator output sections in
+// order: Query Variants, URL Scoring, Deduplicated & Normalized Keywords,
+// Composite Scoring, Alignment Scores, All Source Keywords, then Final results.
+// No editing is allowed here — the generator view remains the only place
+// results can be edited.
 export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
-  const output = entry.output;
+  const full = entry.fullOutput;
+  const result: ResultPayload | null = full
+    ? {
+        primary: full.primary,
+        secondary: full.secondary,
+        warning: full.warning ?? null,
+        warningType: full.warningType ?? null,
+      }
+    : entry.output;
+  const intentValue: Intent = entry.intent === 'informational' ? 'informational' : 'commercial';
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6">
@@ -42,36 +60,64 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
             Read-only
           </span>
         </div>
+      </section>
 
-        {output === null ? (
-          <p className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+      {full?.variants && full.variants.length > 0 && (
+        <QueryVariantsPanel seedKeyword={entry.keyword} intent={intentValue} variants={full.variants} done />
+      )}
+
+      {full?.urls && full.urls.length > 0 && (
+        <CompetitorUrlsPanel urls={full.urls} done candidateCount={null} />
+      )}
+
+      {full?.normalizedKeywords && full.normalizedKeywords.length > 0 && (
+        <DedupKeywordsPanel keywords={full.normalizedKeywords} />
+      )}
+
+      {full?.compositeCandidates && full.compositeCandidates.length > 0 && (
+        <CompositeScoringPanel candidates={full.compositeCandidates} />
+      )}
+
+      {full?.alignmentScores && full.alignmentScores.length > 0 && (
+        <AlignmentScoresPanel rows={full.alignmentScores} />
+      )}
+
+      {full?.allKeywords && full.allKeywords.length > 0 && (
+        <SourceKeywordsPanel keywords={full.allKeywords} />
+      )}
+
+      <section className="animate-rise rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-bold text-slate-900">Final results</h2>
+
+        {result === null ? (
+          <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
             The full output for this run is not available.
           </p>
         ) : (
           <>
-            {(output.warning || output.warningType) && (
+            {(result.warning || result.warningType) && (
               <div
                 role="alert"
                 className="mt-4 flex items-start gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"
               >
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 <span>
-                  {output.warningType && (
+                  {result.warningType && (
                     <span className="mr-2 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
-                      {output.warningType}
+                      {result.warningType}
                     </span>
                   )}
-                  {output.warning ?? 'The validation pass raised a warning.'}
+                  {result.warning ?? 'The validation pass raised a warning.'}
                 </span>
               </div>
             )}
 
             <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide text-slate-500">Primary Keywords</h3>
-            {output.primary.length === 0 ? (
+            {result.primary.length === 0 ? (
               <p className="mt-2 text-sm text-slate-400">No primary keywords recorded for this run.</p>
             ) : (
               <div className="mt-2 grid gap-4 sm:grid-cols-2">
-                {output.primary.map((k, i) => (
+                {result.primary.map((k, i) => (
                   <article key={`p-${i}`} className="rounded-2xl border-2 border-indigo-200 bg-white p-5 shadow-sm">
                     <div className="flex items-start justify-between gap-3">
                       <h4 className="text-lg font-semibold text-slate-900">{k.keyword}</h4>
@@ -88,7 +134,7 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
             )}
 
             <h3 className="mt-6 text-sm font-semibold uppercase tracking-wide text-slate-500">Secondary Keywords</h3>
-            {output.secondary.length === 0 ? (
+            {result.secondary.length === 0 ? (
               <p className="mt-2 text-sm text-slate-400">No secondary keywords recorded for this run.</p>
             ) : (
               <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
@@ -101,7 +147,7 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {output.secondary.map((k, i) => (
+                    {result.secondary.map((k, i) => (
                       <tr key={`s-${i}`}>
                         <td className="px-4 py-2.5 text-slate-400">{i + 1}</td>
                         <td className="px-4 py-2.5 text-slate-800">{k.keyword}</td>
