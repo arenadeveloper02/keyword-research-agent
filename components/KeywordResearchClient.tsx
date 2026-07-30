@@ -33,6 +33,16 @@ import ErrorCard from '@/components/ErrorCard';
 
 type RunStatus = 'idle' | 'initializing' | 'streaming' | 'complete' | 'failed';
 
+const STAGE_ORDER: Stage[] = [
+  'variants',
+  'search',
+  'url_scoring',
+  'semrush',
+  'analysis',
+  'scoring',
+  'validation',
+];
+
 const INITIAL_STAGES: Record<Stage, StageStatus> = {
   variants: 'pending',
   search: 'pending',
@@ -53,10 +63,6 @@ const ALL_DONE_STAGES: Record<Stage, StageStatus> = {
   validation: 'done',
 };
 
-function devWarn(...args: unknown[]): void {
-  if (process.env.NODE_ENV !== 'production') console.warn(...args);
-}
-
 function toNumOrNull(v: unknown): number | null {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v !== '' ? Number(v) : NaN;
   return Number.isFinite(n) ? n : null;
@@ -68,14 +74,6 @@ function asArray(v: unknown): unknown[] {
 
 function asRecord(v: unknown): Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-
-function asStringOrNull(v: unknown): string | null {
-  return typeof v === 'string' && v.length > 0 ? v : null;
-}
-
-function extractStringArray(v: unknown): string[] {
-  return asArray(v).filter((x): x is string => typeof x === 'string' && x.length > 0);
 }
 
 function parseMaybeJson(v: unknown): unknown {
@@ -92,24 +90,65 @@ function parseMaybeJson(v: unknown): unknown {
   return v;
 }
 
-// Accepts an array directly, or an object wrapping an array under common keys,
-// or an object of arrays (flattened).
-function flattenToArray(v: unknown): unknown[] {
-  if (Array.isArray(v)) return v;
-  const o = asRecord(v);
-  if (Array.isArray(o.results)) return o.results;
-  if (Array.isArray(o.result)) return o.result;
-  if (Array.isArray(o.rows)) return o.rows;
-  if (Array.isArray(o.items)) return o.items;
-  if (Array.isArray(o.scores)) return o.scores;
-  if (Array.isArray(o.keywords)) return o.keywords;
-  const out: unknown[] = [];
-  for (const value of Object.values(o)) {
-    if (Array.isArray(value)) out.push(...value);
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
   }
-  return out;
 }
 
+interface Shortlist {
+  primary: PrimaryKeyword[];
+  secondary: SecondaryKeyword[];
+}
+
+interface CollectedData {
+  variants: string[];
+  serpResults: SerpResult[];
+  selectedUrls: CompetitorUrl[];
+  mergedUrls: CompetitorUrl[];
+  normalizedKeywords: NormalizedKeyword[];
+  compositeCandidates: CompositeCandidate[];
+  alignmentScores: ScoredKeyword[];
+  allKeywords: SourceKeyword[];
+  shortlists: Shortlist[];
+  warning: string | null;
+  warningType: string | null;
+}
+
+function emptyCollected(): CollectedData {
+  return {
+    variants: [],
+    serpResults: [],
+    selectedUrls: [],
+    mergedUrls: [],
+    normalizedKeywords: [],
+    compositeCandidates: [],
+    alignmentScores: [],
+    allKeywords: [],
+    shortlists: [],
+    warning: null,
+    warningType: null,
+  };
+}
+
+interface ExtractedData {
+  variants?: string[];
+  serpResults?: SerpResult[];
+  selectedUrls?: CompetitorUrl[];
+  semrushGroups?: CompetitorUrl[];
+  normalized?: NormalizedKeyword[];
+  composite?: CompositeCandidate[];
+  sourceKeywords?: SourceKeyword[];
+  alignment?: ScoredKeyword[];
+  shortlists?: Shortlist[];
+  warning?: string;
+  warningType?: string;
+}
+
+// The upstream now maps shortlist entries with `reasoning` — accept both
+// `rationale` and `reasoning`.
 function coercePrimary(v: unknown): PrimaryKeyword[] {
   return asArray(v)
     .map((item) => {
@@ -118,7 +157,12 @@ function coercePrimary(v: unknown): PrimaryKeyword[] {
         keyword: typeof o.keyword === 'string' ? o.keyword : '',
         volume: toNumOrNull(o.volume),
         difficulty: toNumOrNull(o.difficulty),
-        rationale: typeof o.rationale === 'string' ? o.rationale : null,
+        rationale:
+          typeof o.rationale === 'string'
+            ? o.rationale
+            : typeof o.reasoning === 'string'
+              ? o.reasoning
+              : null,
       };
     })
     .filter((k) => k.keyword.length > 0);
@@ -137,99 +181,55 @@ function coerceSecondary(v: unknown): SecondaryKeyword[] {
     .filter((k) => k.keyword.length > 0);
 }
 
-function coerceSource(v: unknown): SourceKeyword[] {
-  return flattenToArray(v)
+// serpfetch.result.organic entries: { link, title, snippet, position, sourceQuery }
+function coerceSerpOrganic(v: unknown): SerpResult[] {
+  return asArray(v)
     .map((item) => {
       const o = asRecord(item);
+      const url = typeof o.link === 'string' ? o.link : typeof o.url === 'string' ? o.url : '';
       return {
-        keyword: typeof o.keyword === 'string' ? o.keyword : '',
-        urlFrequency: toNumOrNull(o.urlFrequency) ?? 0,
-        volume: toNumOrNull(o.volume),
-        difficulty: toNumOrNull(o.difficulty),
-        compositeScore: toNumOrNull(o.compositeScore) ?? toNumOrNull(o.score) ?? 0,
+        rank: toNumOrNull(o.position) ?? toNumOrNull(o.rank),
+        title: typeof o.title === 'string' ? o.title : null,
+        url,
+        domain: url ? domainOf(url) : '',
       };
     })
-    .filter((k) => k.keyword.length > 0);
+    .filter((r) => r.url.length > 0);
 }
 
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
-function coerceUrls(v: unknown): CompetitorUrl[] {
-  return flattenToArray(v)
+// urlscoring&selection.result.selectedUrls entries: { url, title, snippet, position, domain, score }
+function coerceSelectedUrls(v: unknown): CompetitorUrl[] {
+  return asArray(v)
     .map((item) => {
       const o = asRecord(item);
-      const url = typeof o.url === 'string' ? o.url : typeof o.link === 'string' ? o.link : '';
-      let domain = typeof o.domain === 'string' ? o.domain : '';
+      const url = typeof o.url === 'string' ? o.url : '';
+      let domain = typeof o.domain === 'string' && o.domain.length > 0 ? o.domain : '';
       if (!domain && url) domain = domainOf(url);
-      const kwRaw = Array.isArray(o.keywords) ? o.keywords : Array.isArray(o.keywordsFound) ? o.keywordsFound : null;
-      const keywords = kwRaw ? coerceSource(kwRaw) : undefined;
       return {
         url,
         domain,
         score: toNumOrNull(o.score) ?? 0,
         title: typeof o.title === 'string' ? o.title : null,
-        matchedQueries: toNumOrNull(o.matchedQueries) ?? toNumOrNull(o.queries),
-        totalQueries: toNumOrNull(o.totalQueries),
-        keywordsFound: keywords && keywords.length > 0 ? keywords : undefined,
         status: 'done' as const,
       };
     })
     .filter((u) => u.url.length > 0);
 }
 
-function coerceSerp(v: unknown): SerpResult[] {
-  return flattenToArray(v)
-    .map((item) => {
-      const o = asRecord(item);
-      const url = typeof o.url === 'string' ? o.url : typeof o.link === 'string' ? o.link : '';
-      let domain = typeof o.domain === 'string' ? o.domain : '';
-      if (!domain && url) domain = domainOf(url);
-      return {
-        rank: toNumOrNull(o.rank) ?? toNumOrNull(o.position),
-        title: typeof o.title === 'string' ? o.title : null,
-        url,
-        domain,
-      };
-    })
-    .filter((r) => r.url.length > 0);
-}
-
-function coerceNormalized(v: unknown): NormalizedKeyword[] {
-  return flattenToArray(v)
+// alignmentscoring.scores entries: { keyword, alignment }
+function coerceAlignment(v: unknown): ScoredKeyword[] {
+  return asArray(v)
     .map((item) => {
       const o = asRecord(item);
       return {
         keyword: typeof o.keyword === 'string' ? o.keyword : '',
-        volume: toNumOrNull(o.volume),
+        score: toNumOrNull(o.alignment) ?? toNumOrNull(o.score),
       };
     })
     .filter((k) => k.keyword.length > 0);
 }
 
-function coerceScored(v: unknown): ScoredKeyword[] {
-  return flattenToArray(v)
-    .map((item) => {
-      const o = asRecord(item);
-      const keyword = typeof o.keyword === 'string' ? o.keyword : typeof o.entity === 'string' ? o.entity : '';
-      return {
-        keyword,
-        score:
-          toNumOrNull(o.score) ??
-          toNumOrNull(o.compositeScore) ??
-          toNumOrNull(o.alignment) ??
-          toNumOrNull(o.value),
-      };
-    })
-    .filter((k) => k.keyword.length > 0);
-}
-
-function coerceCandidates(v: unknown): CompositeCandidate[] {
+function coerceComposite(v: unknown): CompositeCandidate[] {
   return asArray(v)
     .map((item) => {
       const o = asRecord(item);
@@ -243,26 +243,46 @@ function coerceCandidates(v: unknown): CompositeCandidate[] {
     .filter((c) => c.keyword.length > 0);
 }
 
-function coerceSemrushGroups(v: unknown): CompetitorUrl[] {
-  const arr = flattenToArray(v);
-  if (arr.some((item) => Array.isArray(asRecord(item).keywords) || Array.isArray(asRecord(item).keywordsFound))) {
-    return coerceUrls(arr);
-  }
-  // Flat rows: { url, keyword, volume, difficulty }
+function coerceNormalized(v: unknown): NormalizedKeyword[] {
+  return asArray(v)
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        volume: toNumOrNull(o.volume),
+      };
+    })
+    .filter((k) => k.keyword.length > 0);
+}
+
+function coerceSourceKeywords(v: unknown): SourceKeyword[] {
+  return asArray(v)
+    .map((item) => {
+      const o = asRecord(item);
+      return {
+        keyword: typeof o.keyword === 'string' ? o.keyword : '',
+        urlFrequency: toNumOrNull(o.urlFrequency) ?? 0,
+        volume: toNumOrNull(o.volume),
+        difficulty: toNumOrNull(o.difficulty),
+        compositeScore: toNumOrNull(o.compositeScore) ?? 0,
+      };
+    })
+    .filter((k) => k.keyword.length > 0);
+}
+
+// aggregatesemrushrows.result.rows entries: { "Keyword", "Search Volume", "CPC", "_sourceUrl" }
+function groupSemrushRows(v: unknown): CompetitorUrl[] {
   const byUrl = new Map<string, SourceKeyword[]>();
-  for (const item of arr) {
+  for (const item of asArray(v)) {
     const o = asRecord(item);
-    const url = typeof o.url === 'string' ? o.url : '';
-    const kw = typeof o.keyword === 'string' ? o.keyword : '';
-    if (!url || !kw) continue;
+    const keyword =
+      typeof o.Keyword === 'string' ? o.Keyword : typeof o.keyword === 'string' ? o.keyword : '';
+    const url =
+      typeof o._sourceUrl === 'string' ? o._sourceUrl : typeof o.url === 'string' ? o.url : '';
+    if (!keyword || !url) continue;
+    const volume = toNumOrNull(o['Search Volume']) ?? toNumOrNull(o.volume);
     const list = byUrl.get(url) ?? [];
-    list.push({
-      keyword: kw,
-      urlFrequency: toNumOrNull(o.urlFrequency) ?? 0,
-      volume: toNumOrNull(o.volume),
-      difficulty: toNumOrNull(o.difficulty),
-      compositeScore: toNumOrNull(o.compositeScore) ?? 0,
-    });
+    list.push({ keyword, urlFrequency: 0, volume, difficulty: null, compositeScore: 0 });
     byUrl.set(url, list);
   }
   return Array.from(byUrl.entries()).map(([url, keywords]) => ({
@@ -287,8 +307,6 @@ function mergeUrlLists(base: CompetitorUrl[], incoming: CompetitorUrl[]): Compet
       ...existing,
       score: u.score > 0 ? u.score : existing.score,
       title: u.title ?? existing.title,
-      matchedQueries: u.matchedQueries ?? existing.matchedQueries,
-      totalQueries: u.totalQueries ?? existing.totalQueries,
       keywordsFound: (u.keywordsFound?.length ?? 0) > 0 ? u.keywordsFound : existing.keywordsFound,
       status: 'done',
     });
@@ -296,500 +314,451 @@ function mergeUrlLists(base: CompetitorUrl[], incoming: CompetitorUrl[]): Compet
   return Array.from(map.values());
 }
 
-function sanitizeKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+// finalresponse.data is a JSON string, but the upstream sometimes emits an
+// unquoted warning value (invalid JSON). Parse leniently: full JSON.parse
+// first, then recover the warning text with a regex fallback — the shortlist
+// still arrives from the validationpass block in that case.
+function parseFinalResponseData(raw: string): { shortlist: Shortlist | null; warning: string | null } {
+  try {
+    const parsed = asRecord(JSON.parse(raw));
+    const primary = coercePrimary(parsed.primary);
+    const secondary = coerceSecondary(parsed.secondary);
+    const warning =
+      typeof parsed.warning === 'string' && parsed.warning.trim().length > 0
+        ? parsed.warning.trim()
+        : null;
+    return {
+      shortlist: primary.length + secondary.length > 0 ? { primary, secondary } : null,
+      warning,
+    };
+  } catch {
+    const match = raw.match(/"warning"\s*:\s*"?([^"\n}]+)"?/);
+    const warning = match && match[1] ? match[1].trim().replace(/,\s*$/, '') : null;
+    return { shortlist: null, warning: warning && warning.length > 0 ? warning : null };
+  }
 }
 
-// Robust accessor for the final output object. For selectedOutput "block.field"
-// tries: output["block.field"] -> output[block][field] -> any blockId entry that
-// nests the block name or carries the field directly. Never assumes a fixed blockId.
-function pickOutput(
-  output: Record<string, unknown>,
-  block: string,
-  field: string,
-  validate?: (v: unknown) => boolean
-): unknown {
-  const target = sanitizeKey(block);
-  const valid = (v: unknown): boolean => v !== undefined && v !== null && (!validate || validate(v));
-
-  const dotted = output[`${block}.${field}`];
-  if (valid(dotted)) return dotted;
-
-  for (const [key, value] of Object.entries(output)) {
-    if (sanitizeKey(key) === target) {
-      const rec = asRecord(value);
-      if (valid(rec[field])) return rec[field];
-      if (valid(value)) return value;
-    }
+// The verified API returns the final output keyed by opaque block UUIDs, so
+// extraction is signature-based: each block is recognized by the fields it
+// carries (primary/secondary, scores, data string, result.selectedUrls,
+// result.organic/queries, result.rows, result.candidates).
+function extractFromOutput(output: Record<string, unknown>): ExtractedData {
+  const out: ExtractedData = {};
+  const blocks: Record<string, unknown>[] = [output];
+  for (const value of Object.values(output)) {
+    const rec = asRecord(parseMaybeJson(value));
+    if (Object.keys(rec).length > 0) blocks.push(rec);
   }
 
-  for (const value of Object.values(output)) {
-    const rec = asRecord(value);
-    if (valid(rec[`${block}.${field}`])) return rec[`${block}.${field}`];
-    for (const [k, v] of Object.entries(rec)) {
-      if (sanitizeKey(k) === target) {
-        const inner = asRecord(v);
-        if (valid(inner[field])) return inner[field];
-        if (valid(v)) return v;
+  for (const block of blocks) {
+    if (Array.isArray(block.primary) || Array.isArray(block.secondary)) {
+      const primary = coercePrimary(block.primary);
+      const secondary = coerceSecondary(block.secondary);
+      if (primary.length + secondary.length > 0) {
+        out.shortlists = [...(out.shortlists ?? []), { primary, secondary }];
       }
     }
-    if (valid(rec[field])) return rec[field];
-  }
 
-  return undefined;
-}
-
-// URL scoring data lives at the output's `.selectedUrls` array.
-function findSelectedUrlsHolder(output: Record<string, unknown>): Record<string, unknown> | null {
-  if (Array.isArray(output.selectedUrls)) return output;
-  for (const value of Object.values(output)) {
-    const rec = asRecord(value);
-    if (Array.isArray(rec.selectedUrls)) return rec;
-    for (const inner of Object.values(rec)) {
-      const ir = asRecord(inner);
-      if (Array.isArray(ir.selectedUrls)) return ir;
+    if (Array.isArray(block.scores)) {
+      const rows = coerceAlignment(block.scores);
+      if (rows.length > 0) out.alignment = rows;
     }
-  }
-  return null;
-}
 
-function extractSelectedUrls(output: Record<string, unknown>): { rows: CompetitorUrl[]; candidateTotal: number | null } {
-  const direct = asRecord(
-    pickOutput(output, 'urlscoring&selection', 'result', (v) => Array.isArray(asRecord(v).selectedUrls))
-  );
-  const holder = Array.isArray(direct.selectedUrls) ? direct : findSelectedUrlsHolder(output);
-  if (!holder) return { rows: [], candidateTotal: null };
-  const rows = asArray(holder.selectedUrls)
-    .map((item) => {
-      const o = asRecord(item);
-      const url = typeof o.url === 'string' ? o.url : '';
-      const domain = typeof o.domain === 'string' && o.domain.length > 0 ? o.domain : domainOf(url);
-      return {
-        url,
-        domain,
-        // Render entry.score AS-IS - it is already a rounded number
-        score: toNumOrNull(o.score) ?? 0,
-        title: typeof o.title === 'string' ? o.title : null,
-        matchedQueries: toNumOrNull(o.matchedQueries),
-        totalQueries: toNumOrNull(o.totalQueries),
-        status: 'done' as const,
-      };
-    })
-    .filter((u) => u.url.length > 0);
-  const candidateTotal =
-    toNumOrNull(holder.candidateCount) ?? toNumOrNull(holder.totalCandidates) ?? toNumOrNull(holder.candidates);
-  return { rows, candidateTotal };
-}
+    if (typeof block.warning === 'string' && block.warning.trim().length > 0) {
+      out.warning = block.warning.trim();
+    } else if (block.warning !== undefined) {
+      const w = asRecord(parseMaybeJson(block.warning));
+      if (typeof w.description === 'string' && w.description.trim().length > 0) {
+        out.warning = w.description.trim();
+      }
+      if (typeof w.type === 'string' && w.type.trim().length > 0) {
+        out.warningType = w.type.trim();
+      }
+    }
 
-// Builds the tiered "all source keywords" list by counting how many competitor
-// URLs each keyword appears on.
-function buildSourceKeywords(urls: CompetitorUrl[]): SourceKeyword[] {
-  const map = new Map<string, SourceKeyword>();
-  for (const u of urls) {
-    for (const k of u.keywordsFound ?? []) {
-      const key = k.keyword.toLowerCase();
-      const existing = map.get(key);
-      if (existing) {
-        map.set(key, {
-          ...existing,
-          urlFrequency: existing.urlFrequency + 1,
-          volume: existing.volume ?? k.volume,
-          difficulty: existing.difficulty ?? k.difficulty,
-          compositeScore: Math.max(existing.compositeScore, k.compositeScore),
-        });
+    if (typeof block.data === 'string' && block.data.trim().startsWith('{')) {
+      const fromFinal = parseFinalResponseData(block.data);
+      if (fromFinal.shortlist) out.shortlists = [...(out.shortlists ?? []), fromFinal.shortlist];
+      if (fromFinal.warning && !out.warning) out.warning = fromFinal.warning;
+    }
+
+    const result = asRecord(parseMaybeJson(block.result));
+
+    if (Array.isArray(result.selectedUrls)) {
+      const urls = coerceSelectedUrls(result.selectedUrls);
+      if (urls.length > 0) out.selectedUrls = urls;
+    }
+
+    if (Array.isArray(result.queries)) {
+      const queries = result.queries.filter(
+        (q): q is string => typeof q === 'string' && q.trim().length > 0
+      );
+      if (queries.length > 0) out.variants = queries;
+    }
+
+    if (Array.isArray(result.organic)) {
+      const serp = coerceSerpOrganic(result.organic);
+      if (serp.length > 0) out.serpResults = serp;
+    }
+
+    if (Array.isArray(result.rows)) {
+      const groups = groupSemrushRows(result.rows);
+      if (groups.length > 0) out.semrushGroups = groups;
+    }
+
+    if (Array.isArray(result.candidates)) {
+      const arr = result.candidates;
+      const isComposite = arr.some((item) => {
+        const o = asRecord(item);
+        return o.compositeScore !== undefined || o.alignmentScore !== undefined;
+      });
+      if (isComposite) {
+        const composite = coerceComposite(arr);
+        if (composite.length > 0) out.composite = composite;
+        const source = coerceSourceKeywords(arr);
+        if (source.length > 0) out.sourceKeywords = source;
       } else {
-        map.set(key, { ...k, urlFrequency: k.urlFrequency > 0 ? k.urlFrequency : 1 });
+        const normalized = coerceNormalized(arr);
+        if (normalized.length > 0) out.normalized = normalized;
+        if (!out.sourceKeywords) {
+          const source = coerceSourceKeywords(arr);
+          if (source.length > 0) out.sourceKeywords = source;
+        }
       }
     }
   }
-  return Array.from(map.values()).sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1));
-}
 
-interface RunSnapshot {
-  variants: string[];
-  serpResults: SerpResult[];
-  selectedUrls: CompetitorUrl[];
-  candidateTotal: number | null;
-  mergedUrls: CompetitorUrl[];
-  normalizedKeywords: NormalizedKeyword[];
-  compositeCandidates: CompositeCandidate[];
-  alignmentScores: ScoredKeyword[];
-  allKeywords: SourceKeyword[];
-  result: ResultPayload | null;
-}
-
-function buildSnapshot(output: Record<string, unknown>): RunSnapshot {
-  const variants = extractStringArray(parseMaybeJson(pickOutput(output, 'queryexpansion', 'variants')));
-  const serpResults = coerceSerp(parseMaybeJson(pickOutput(output, 'serpfetch', 'result')));
-  const { rows: selectedUrls, candidateTotal } = extractSelectedUrls(output);
-  const groups = coerceSemrushGroups(parseMaybeJson(pickOutput(output, 'aggregatesemrushrows', 'result')));
-  const mergedUrls = mergeUrlLists(selectedUrls, groups);
-  const normalizedKeywords = coerceNormalized(parseMaybeJson(pickOutput(output, 'dedup&volumenormalize', 'result')));
-  const compositeCandidates = coerceCandidates(
-    flattenToArray(parseMaybeJson(pickOutput(output, 'compositescoring', 'result')))
-  );
-  const alignmentScores = coerceScored(parseMaybeJson(pickOutput(output, 'alignmentscoring', 'scores')));
-  const allKeywords = buildSourceKeywords(mergedUrls);
-
-  let primary = coercePrimary(parseMaybeJson(pickOutput(output, 'validationpass', 'primary')));
-  if (primary.length === 0) {
-    primary = coercePrimary(parseMaybeJson(pickOutput(output, 'aishortlisting', 'primary')));
-  }
-  let secondary = coerceSecondary(parseMaybeJson(pickOutput(output, 'validationpass', 'secondary')));
-  if (secondary.length === 0) {
-    secondary = coerceSecondary(parseMaybeJson(pickOutput(output, 'aishortlisting', 'secondary')));
-  }
-
-  const warningRec = asRecord(parseMaybeJson(pickOutput(output, 'validationpass', 'warning')));
-  const warningType =
-    asStringOrNull(parseMaybeJson(pickOutput(output, 'validationpass', 'warning.type'))) ??
-    asStringOrNull(warningRec.type);
-  const warning =
-    asStringOrNull(parseMaybeJson(pickOutput(output, 'validationpass', 'warning.description'))) ??
-    asStringOrNull(warningRec.description);
-
-  const result: ResultPayload | null =
-    primary.length > 0 || secondary.length > 0
-      ? { primary, secondary, warning: warning ?? null, warningType: warningType ?? null }
-      : null;
-
-  return {
-    variants,
-    serpResults,
-    selectedUrls,
-    candidateTotal,
-    mergedUrls,
-    normalizedKeywords,
-    compositeCandidates,
-    alignmentScores,
-    allKeywords,
-    result,
-  };
-}
-
-function computeStages(
-  d: {
-    variants: boolean;
-    serp: boolean;
-    urls: boolean;
-    semrush: boolean;
-    normalized: boolean;
-    composite: boolean;
-    final: boolean;
-  },
-  streaming: boolean
-): Record<Stage, StageStatus> {
-  const order: [Stage, boolean][] = [
-    ['variants', d.variants],
-    ['search', d.serp],
-    ['url_scoring', d.urls],
-    ['semrush', d.semrush],
-    ['analysis', d.normalized],
-    ['scoring', d.composite],
-    ['validation', d.final],
-  ];
-  const out: Record<Stage, StageStatus> = { ...INITIAL_STAGES };
-  let activeSet = false;
-  for (const [stage, has] of order) {
-    if (has) {
-      out[stage] = 'done';
-    } else if (streaming && !activeSet) {
-      out[stage] = 'active';
-      activeSet = true;
-    }
-  }
   return out;
 }
 
+function pickBestShortlist(lists: Shortlist[]): Shortlist | null {
+  let best: Shortlist | null = null;
+  for (const s of lists) {
+    const size = s.primary.length + s.secondary.length;
+    const bestSize = best ? best.primary.length + best.secondary.length : -1;
+    if (size >= bestSize) best = s;
+  }
+  return best && best.primary.length + best.secondary.length > 0 ? best : null;
+}
+
+function advanceStages(prev: Record<Stage, StageStatus>, stage: Stage): Record<Stage, StageStatus> {
+  const idx = STAGE_ORDER.indexOf(stage);
+  if (idx === -1) return prev;
+  const next: Record<Stage, StageStatus> = { ...prev };
+  STAGE_ORDER.forEach((s, i) => {
+    if (i <= idx) next[s] = 'done';
+    else if (i === idx + 1 && next[s] === 'pending') next[s] = 'active';
+  });
+  return next;
+}
+
+async function saveRun(inputs: RunInputs, result: ResultPayload, c: CollectedData): Promise<void> {
+  const output: SavedRunOutput = {
+    primary: result.primary,
+    secondary: result.secondary,
+    warning: result.warning ?? null,
+    warningType: result.warningType ?? null,
+    allKeywords: c.allKeywords,
+    variants: c.variants,
+    urls: c.mergedUrls,
+    serpResults: c.serpResults,
+    normalizedKeywords: c.normalizedKeywords,
+    compositeCandidates: c.compositeCandidates,
+    alignmentScores: c.alignmentScores,
+  };
+  try {
+    await fetch('/api/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tool: 'keyword-research',
+        label: inputs.keyword,
+        status: 'completed',
+        inputs,
+        output,
+      }),
+    });
+  } catch {
+    // Saving is best-effort — never break the UI over it.
+  }
+}
+
+// The generator ALWAYS starts empty: no saved-run restore on mount. Data only
+// appears after the user starts a run, and the whole component unmounts (and
+// therefore clears) when the user switches tabs.
 export default function KeywordResearchClient() {
   const [keyword, setKeyword] = useState('');
   const [intent, setIntent] = useState<Intent>('commercial');
   const [client, setClient] = useState('');
+
   const [status, setStatus] = useState<RunStatus>('idle');
+  const [stages, setStages] = useState<Record<Stage, StageStatus>>({ ...INITIAL_STAGES });
   const [initError, setInitError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
-  const [stages, setStages] = useState<Record<Stage, StageStatus>>(INITIAL_STAGES);
+
   const [variants, setVariants] = useState<string[]>([]);
   const [serpResults, setSerpResults] = useState<SerpResult[]>([]);
-  const [urls, setUrls] = useState<CompetitorUrl[]>([]);
-  const [candidateTotal, setCandidateTotal] = useState<number | null>(null);
+  const [selectedUrls, setSelectedUrls] = useState<CompetitorUrl[]>([]);
+  const [mergedUrls, setMergedUrls] = useState<CompetitorUrl[]>([]);
   const [normalizedKeywords, setNormalizedKeywords] = useState<NormalizedKeyword[]>([]);
   const [compositeCandidates, setCompositeCandidates] = useState<CompositeCandidate[]>([]);
   const [alignmentScores, setAlignmentScores] = useState<ScoredKeyword[]>([]);
   const [allKeywords, setAllKeywords] = useState<SourceKeyword[]>([]);
   const [result, setResult] = useState<ResultPayload | null>(null);
-  const [inputs, setInputs] = useState<RunInputs | null>(null);
-  const [balanceSignal, setBalanceSignal] = useState(0);
+  const [runInputs, setRunInputs] = useState<RunInputs | null>(null);
+  const [refreshSignal, setRefreshSignal] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
-  const outputRef = useRef<Record<string, unknown>>({});
-  const savedRef = useRef(false);
-  const startedRef = useRef(false);
+  const collectedRef = useRef<CollectedData>(emptyCollected());
+  const finalizedRef = useRef(false);
+  const runInputsRef = useRef<RunInputs | null>(null);
 
-  // Restore the most recent saved run so a reload keeps the last result visible.
   useEffect(() => {
-    let cancelled = false;
-    async function restore(): Promise<void> {
-      try {
-        const res = await fetch('/api/runs?tool=keyword-research&limit=1');
-        if (!res.ok) return;
-        const data = (await res.json()) as { runs?: unknown };
-        const runs = asArray(data.runs);
-        if (runs.length === 0) return;
-        const run = asRecord(runs[0]);
-        const savedInputs = asRecord(parseMaybeJson(run.inputs));
-        const out = asRecord(parseMaybeJson(run.output));
-        const primary = coercePrimary(parseMaybeJson(out.primary));
-        const secondary = coerceSecondary(parseMaybeJson(out.secondary));
-        if (primary.length === 0 && secondary.length === 0) return;
-        const kw = typeof savedInputs.keyword === 'string' ? savedInputs.keyword : '';
-        if (!kw) return;
-        if (cancelled || startedRef.current) return;
-        const restoredIntent: Intent = savedInputs.intent === 'informational' ? 'informational' : 'commercial';
-        const restoredClient = typeof savedInputs.client === 'string' ? savedInputs.client : '';
-        setKeyword(kw);
-        setIntent(restoredIntent);
-        setClient(restoredClient);
-        setInputs({ keyword: kw, intent: restoredIntent, client: restoredClient || undefined });
-        setResult({
-          primary,
-          secondary,
-          warning: asStringOrNull(out.warning),
-          warningType: asStringOrNull(out.warningType),
-        });
-        setVariants(extractStringArray(parseMaybeJson(out.variants)));
-        setUrls(coerceUrls(parseMaybeJson(out.urls)));
-        setSerpResults(coerceSerp(parseMaybeJson(out.serpResults)));
-        setNormalizedKeywords(coerceNormalized(parseMaybeJson(out.normalizedKeywords)));
-        setCompositeCandidates(coerceCandidates(flattenToArray(parseMaybeJson(out.compositeCandidates))));
-        setAlignmentScores(coerceScored(parseMaybeJson(out.alignmentScores)));
-        setAllKeywords(coerceSource(parseMaybeJson(out.allKeywords)));
-        setStages(ALL_DONE_STAGES);
-        setStatus('complete');
-      } catch (err) {
-        devWarn('restore failed', err);
-      }
-    }
-    void restore();
     return () => {
-      cancelled = true;
+      abortRef.current?.abort();
     };
   }, []);
 
-  function applySnapshot(snap: RunSnapshot, streaming: boolean): void {
-    if (snap.variants.length > 0) setVariants(snap.variants);
-    if (snap.serpResults.length > 0) setSerpResults(snap.serpResults);
-    if (snap.mergedUrls.length > 0) setUrls(snap.mergedUrls);
-    if (snap.candidateTotal !== null) setCandidateTotal(snap.candidateTotal);
-    if (snap.normalizedKeywords.length > 0) setNormalizedKeywords(snap.normalizedKeywords);
-    if (snap.compositeCandidates.length > 0) setCompositeCandidates(snap.compositeCandidates);
-    if (snap.alignmentScores.length > 0) setAlignmentScores(snap.alignmentScores);
-    if (snap.allKeywords.length > 0) setAllKeywords(snap.allKeywords);
-    if (snap.result) setResult(snap.result);
-    setStages(
-      computeStages(
-        {
-          variants: snap.variants.length > 0,
-          serp: snap.serpResults.length > 0,
-          urls: snap.selectedUrls.length > 0,
-          semrush: snap.mergedUrls.some((u) => (u.keywordsFound?.length ?? 0) > 0),
-          normalized: snap.normalizedKeywords.length > 0,
-          composite: snap.compositeCandidates.length > 0 || snap.alignmentScores.length > 0,
-          final: snap.result !== null,
-        },
-        streaming
-      )
-    );
-  }
-
-  function mergeChunk(chunk: unknown): void {
-    const rec = asRecord(chunk);
-    const layers: Record<string, unknown>[] = [rec];
-    if (rec.output !== undefined) layers.push(asRecord(parseMaybeJson(rec.output)));
-    if (rec.data !== undefined) layers.push(asRecord(parseMaybeJson(rec.data)));
-    if (typeof rec.result === 'object' && rec.result !== null && !Array.isArray(rec.result)) {
-      layers.push(asRecord(rec.result));
-    }
-    for (const layer of layers) {
-      for (const [k, v] of Object.entries(layer)) {
-        if (v !== undefined && v !== null) outputRef.current[k] = v;
-      }
-    }
-  }
-
-  function handleSseLine(rawLine: string): void {
-    const line = rawLine.trim();
-    if (!line.startsWith('data:')) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
-    try {
-      mergeChunk(JSON.parse(payload));
-      applySnapshot(buildSnapshot(outputRef.current), true);
-    } catch {
-      // Skip non-JSON SSE lines.
-    }
-  }
-
-  async function persistRun(runInputs: RunInputs, snap: RunSnapshot): Promise<void> {
-    if (savedRef.current || !snap.result) return;
-    savedRef.current = true;
-    const output: SavedRunOutput = {
-      primary: snap.result.primary,
-      secondary: snap.result.secondary,
-      warning: snap.result.warning ?? null,
-      warningType: snap.result.warningType ?? null,
-      allKeywords: snap.allKeywords,
-      variants: snap.variants,
-      urls: snap.mergedUrls,
-      serpResults: snap.serpResults,
-      normalizedKeywords: snap.normalizedKeywords,
-      compositeCandidates: snap.compositeCandidates,
-      alignmentScores: snap.alignmentScores,
-    };
-    try {
-      await fetch('/api/runs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tool: 'keyword-research',
-          label: runInputs.keyword,
-          status: 'completed',
-          inputs: runInputs,
-          output,
-        }),
-      });
-    } catch (err) {
-      devWarn('failed to save run', err);
-    }
-  }
-
-  function finishRun(runInputs: RunInputs): void {
-    const snap = buildSnapshot(outputRef.current);
-    applySnapshot(snap, false);
-    if (snap.result) {
-      setStages(ALL_DONE_STAGES);
-      setStatus('complete');
-      setBalanceSignal((s) => s + 1);
-      void persistRun(runInputs, snap);
-    } else {
-      setRunError('The pipeline finished without returning keyword results. Please try again.');
-      setStatus('failed');
-    }
-  }
-
-  function clearRunData(): void {
-    outputRef.current = {};
-    savedRef.current = false;
-    setStages(INITIAL_STAGES);
+  function resetRunData(): void {
+    collectedRef.current = emptyCollected();
+    finalizedRef.current = false;
     setVariants([]);
     setSerpResults([]);
-    setUrls([]);
-    setCandidateTotal(null);
+    setSelectedUrls([]);
+    setMergedUrls([]);
     setNormalizedKeywords([]);
     setCompositeCandidates([]);
     setAlignmentScores([]);
     setAllKeywords([]);
     setResult(null);
     setRunError(null);
-    setInitError(null);
+    setStages({ ...INITIAL_STAGES });
   }
 
-  async function startRun(): Promise<void> {
-    const kw = keyword.trim();
-    if (!kw) return;
-    startedRef.current = true;
-    clearRunData();
-    const runInputs: RunInputs = { keyword: kw, intent, client: client.trim() || undefined };
-    setInputs(runInputs);
+  const advance = (stage: Stage): void => setStages((prev) => advanceStages(prev, stage));
+
+  function applyExtracted(d: ExtractedData): void {
+    const c = collectedRef.current;
+    const seed = runInputsRef.current?.keyword ?? '';
+
+    if (d.variants) {
+      const filtered = d.variants.filter(
+        (v) => v.trim().toLowerCase() !== seed.trim().toLowerCase()
+      );
+      c.variants = filtered;
+      setVariants(filtered);
+      advance('variants');
+    }
+    if (d.serpResults && d.serpResults.length > 0) {
+      c.serpResults = d.serpResults;
+      setSerpResults(d.serpResults);
+      advance('search');
+    }
+    if (d.selectedUrls && d.selectedUrls.length > 0) {
+      c.selectedUrls = d.selectedUrls;
+      c.mergedUrls = mergeUrlLists(c.mergedUrls, d.selectedUrls);
+      setSelectedUrls(c.selectedUrls);
+      setMergedUrls(c.mergedUrls);
+      advance('url_scoring');
+    }
+    if (d.semrushGroups && d.semrushGroups.length > 0) {
+      c.mergedUrls = mergeUrlLists(c.mergedUrls, d.semrushGroups);
+      setMergedUrls(c.mergedUrls);
+      advance('semrush');
+    }
+    if (d.normalized && d.normalized.length > 0) {
+      c.normalizedKeywords = d.normalized;
+      setNormalizedKeywords(d.normalized);
+      advance('analysis');
+    }
+    if (d.composite && d.composite.length > 0) {
+      c.compositeCandidates = d.composite;
+      setCompositeCandidates(d.composite);
+      advance('scoring');
+    }
+    if (d.alignment && d.alignment.length > 0) {
+      c.alignmentScores = d.alignment;
+      setAlignmentScores(d.alignment);
+      advance('scoring');
+    }
+    if (d.sourceKeywords && d.sourceKeywords.length >= c.allKeywords.length) {
+      c.allKeywords = d.sourceKeywords;
+      setAllKeywords(d.sourceKeywords);
+    }
+    if (d.shortlists && d.shortlists.length > 0) {
+      c.shortlists.push(...d.shortlists);
+    }
+    if (d.warning) c.warning = d.warning;
+    if (d.warningType) c.warningType = d.warningType;
+  }
+
+  function finalizeRun(): void {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+    const c = collectedRef.current;
+    const best = pickBestShortlist(c.shortlists);
+    if (!best) {
+      setRunError('The pipeline finished without returning any keywords. Please try again.');
+      setStatus('failed');
+      return;
+    }
+    const payload: ResultPayload = {
+      primary: best.primary,
+      secondary: best.secondary,
+      warning: c.warning,
+      warningType: c.warningType,
+    };
+    setResult(payload);
+    setStages({ ...ALL_DONE_STAGES });
+    setStatus('complete');
+    setRefreshSignal((n) => n + 1);
+    const inputs = runInputsRef.current;
+    if (inputs) void saveRun(inputs, payload, c);
+  }
+
+  function handleStreamEvent(parsed: unknown): void {
+    const rec = asRecord(parsed);
+    const evt = typeof rec.event === 'string' ? rec.event : '';
+    const data = asRecord(rec.data);
+    const output = asRecord(data.output ?? rec.output);
+    if (Object.keys(output).length > 0) {
+      applyExtracted(extractFromOutput(output));
+    } else {
+      applyExtracted(extractFromOutput(rec));
+    }
+    if (evt === 'final' || evt === 'done' || evt === 'complete') {
+      finalizeRun();
+    }
+  }
+
+  async function startRun(inputs: RunInputs): Promise<void> {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    resetRunData();
+    runInputsRef.current = inputs;
+    setRunInputs(inputs);
+    setInitError(null);
     setStatus('initializing');
+
     try {
       const initRes = await fetch('/api/keyword-research/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: kw, intent, client: client.trim() }),
+        body: JSON.stringify({
+          keyword: inputs.keyword,
+          intent: inputs.intent,
+          client: inputs.client ?? '',
+        }),
+        signal: controller.signal,
       });
       const initData = (await initRes.json().catch(() => ({}))) as { token?: string; error?: string };
-      if (!initRes.ok || !initData.token) {
-        setInitError(initData.error ?? 'Could not start the research run.');
+      if (!initRes.ok || typeof initData.token !== 'string' || initData.token.length === 0) {
+        setInitError(
+          typeof initData.error === 'string' && initData.error
+            ? initData.error
+            : 'Could not start the research run. Please try again.'
+        );
         setStatus('idle');
         return;
       }
 
-      const controller = new AbortController();
-      abortRef.current = controller;
       setStatus('streaming');
-      setStages({ ...INITIAL_STAGES, variants: 'active' });
+      setStages((prev) => ({ ...prev, variants: 'active' }));
 
-      const streamRes = await fetch(`/api/keyword-research/stream/${initData.token}`, {
+      const res = await fetch(`/api/keyword-research/stream/${initData.token}`, {
         signal: controller.signal,
       });
-      if (!streamRes.ok || !streamRes.body) {
-        const text = await streamRes.text().catch(() => '');
-        setRunError(text || 'The research stream could not be opened.');
-        setStatus('failed');
-        return;
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `The keyword research stream failed (${res.status}).`);
       }
 
-      const reader = streamRes.body.getReader();
+      const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+
+      const processLine = (rawLine: string): void => {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) return;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') return;
+        try {
+          handleStreamEvent(JSON.parse(payload));
+        } catch {
+          // Skip non-JSON SSE lines.
+        }
+      };
+
       for (;;) {
-        const { value, done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
-        for (const rawLine of lines) {
-          handleSseLine(rawLine);
-        }
+        for (const l of lines) processLine(l);
       }
-      if (buffer) handleSseLine(buffer);
+      if (buffer) processLine(buffer);
 
-      finishRun(runInputs);
-    } catch (err) {
-      if ((err as { name?: string }).name === 'AbortError') {
-        setStatus('idle');
-        return;
+      if (!controller.signal.aborted && !finalizedRef.current) {
+        finalizeRun();
       }
-      devWarn('run failed', err);
-      setRunError('The research run failed unexpectedly. Please try again.');
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const message =
+        err instanceof Error && err.message ? err.message : 'The research run failed unexpectedly.';
+      setRunError(message);
       setStatus('failed');
-    } finally {
-      abortRef.current = null;
     }
   }
 
-  function cancelRun(): void {
+  function handleSubmit(): void {
+    const trimmed = keyword.trim();
+    if (!trimmed) return;
+    void startRun({ keyword: trimmed, intent, client: client.trim() || undefined });
+  }
+
+  function handleRetry(): void {
+    const inputs = runInputsRef.current;
+    if (inputs) {
+      void startRun(inputs);
+    } else {
+      setRunError(null);
+      setStatus('idle');
+    }
+  }
+
+  function handleCancel(): void {
     abortRef.current?.abort();
-    abortRef.current = null;
     setStatus('idle');
   }
 
-  function resetAll(): void {
+  function handleReset(): void {
     abortRef.current?.abort();
-    abortRef.current = null;
-    startedRef.current = true;
-    clearRunData();
     setKeyword('');
     setClient('');
     setIntent('commercial');
-    setInputs(null);
+    setRunInputs(null);
+    runInputsRef.current = null;
+    setInitError(null);
+    resetRunData();
     setStatus('idle');
   }
 
   const running = status === 'initializing' || status === 'streaming';
-  const hasSemrushKeywords = urls.some((u) => (u.keywordsFound?.length ?? 0) > 0);
+  const hasSemrushKeywords = mergedUrls.some((u) => (u.keywordsFound?.length ?? 0) > 0);
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6">
+    <div className="mx-auto w-full max-w-5xl space-y-4 px-4 py-6">
       <header className="text-center">
-        <h1 className="text-2xl font-bold text-slate-900">Keyword Research Agent</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Keyword Research</h1>
         <p className="mt-1 text-sm text-slate-500">
           Expand a seed keyword into a validated, competitor-backed shortlist.
         </p>
       </header>
 
-      <SemrushBalanceWidget refreshSignal={balanceSignal} />
+      <SemrushBalanceWidget refreshSignal={refreshSignal} />
 
       <ResearchForm
         keyword={keyword}
@@ -800,34 +769,19 @@ export default function KeywordResearchClient() {
         onKeywordChange={setKeyword}
         onIntentChange={setIntent}
         onClientChange={setClient}
-        onSubmit={() => {
-          void startRun();
-        }}
-        onCancel={cancelRun}
-        onReset={resetAll}
+        onSubmit={handleSubmit}
+        onCancel={handleCancel}
+        onReset={handleReset}
       />
 
-      {running && inputs && (
-        <h2 className="text-center text-base font-semibold text-slate-700">
-          {`Working on \u201c${inputs.keyword}\u201d${inputs.client ? ` for ${inputs.client}` : ''}\u2026`}
-        </h2>
-      )}
+      {status !== 'idle' && <ProgressTracker stages={stages} variants={variants} />}
 
-      {(running || status === 'complete') && <ProgressTracker stages={stages} variants={variants} />}
+      {status === 'failed' && runError && <ErrorCard message={runError} onRetry={handleRetry} />}
 
-      {status === 'failed' && runError && (
-        <ErrorCard
-          message={runError}
-          onRetry={() => {
-            void startRun();
-          }}
-        />
-      )}
-
-      {variants.length > 0 && inputs && (
+      {variants.length > 0 && runInputs && (
         <QueryVariantsPanel
-          seedKeyword={inputs.keyword}
-          intent={inputs.intent}
+          seedKeyword={runInputs.keyword}
+          intent={runInputs.intent}
           variants={variants}
           done={stages.variants === 'done'}
         />
@@ -835,11 +789,11 @@ export default function KeywordResearchClient() {
 
       {serpResults.length > 0 && <SerpResultsPanel results={serpResults} />}
 
-      {urls.length > 0 && (
-        <CompetitorUrlsPanel urls={urls} done={stages.url_scoring === 'done'} candidateCount={candidateTotal} />
+      {selectedUrls.length > 0 && (
+        <CompetitorUrlsPanel urls={selectedUrls} done={stages.url_scoring === 'done'} candidateCount={null} />
       )}
 
-      {hasSemrushKeywords && <SemrushKeywordsPanel urls={urls} done={stages.semrush === 'done'} />}
+      {hasSemrushKeywords && <SemrushKeywordsPanel urls={mergedUrls} done={stages.semrush === 'done'} />}
 
       {normalizedKeywords.length > 0 && <DedupKeywordsPanel keywords={normalizedKeywords} />}
 
@@ -849,20 +803,20 @@ export default function KeywordResearchClient() {
 
       {allKeywords.length > 0 && <SourceKeywordsPanel keywords={allKeywords} />}
 
-      {result && inputs && (
+      {result && runInputs && (
         <ResultsSection
           result={result}
-          inputs={inputs}
+          inputs={runInputs}
           allKeywords={allKeywords}
           variants={variants}
-          competitorUrls={urls}
+          competitorUrls={mergedUrls}
           serpResults={serpResults}
           normalizedKeywords={normalizedKeywords}
           compositeCandidates={compositeCandidates}
           alignmentScores={alignmentScores}
-          onResultChange={(next) => setResult(next)}
+          onResultChange={(r) => setResult(r)}
         />
       )}
-    </main>
+    </div>
   );
 }

@@ -9,10 +9,10 @@ import type { HistoryEntry } from '@/lib/types';
 
 type AppView = 'generator' | 'history';
 
-// NOTE: The active tab and the currently viewed history entry are in-memory
-// React state (useState) only — they reset on page reload. History entries
-// themselves are loaded from the backend (Arena history workflow + saved runs
-// API), so past runs persist across sessions.
+// The Generator tab always starts empty: KeywordResearchClient is unmounted
+// whenever the user switches away, so returning to the tab shows a clean form
+// with no data from a previous run. Past runs live in the History tab, which
+// loads them from the backend (Arena history workflow + saved runs API).
 export default function KeywordResearchApp() {
   const [view, setView] = useState<AppView>('generator');
   const [selected, setSelected] = useState<HistoryEntry | null>(null);
@@ -49,10 +49,8 @@ export default function KeywordResearchApp() {
         </div>
       </div>
 
-      {/* Keep the generator mounted so an in-progress streaming run continues while History is open. */}
-      <div className={view === 'generator' ? '' : 'hidden'}>
-        <KeywordResearchClient />
-      </div>
+      {/* Unmount the generator when leaving the tab so all run data is cleared on return. */}
+      {view === 'generator' && <KeywordResearchClient />}
 
       {view === 'history' &&
         (selected ? (

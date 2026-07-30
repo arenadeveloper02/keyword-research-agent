@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 // Server-side only — never exposed to the client bundle.
 const HISTORY_URL =
   'https://agent.thearena.ai/api/workflows/38458816-0871-4c2f-8545-39654a5530cc/execute';
-const API_KEY = 'sk-sim-Vk9yj3QfVSZxJ8lulZTYK549u5ThZo9u';
+const API_KEY = 'sk-sim-GwQAiLwWID8U3islZzPltwAgmjlUHY5v';
 
 function sanitizeKey(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');

@@ -23,7 +23,7 @@ class ErrorBoundaryInner extends Component<ErrorBoundaryProps, ErrorBoundaryStat
         <main className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-4 text-center">
           <h1 className="text-xl font-semibold text-slate-900">Something went wrong</h1>
           <p className="mt-2 text-sm text-slate-500">
-            The page hit an unexpected error. Reload to try again — your last saved run will be restored.
+            The page hit an unexpected error. Reload to try again — past runs remain available in the History tab.
           </p>
           <button
             type="button"

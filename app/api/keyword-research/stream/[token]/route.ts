@@ -4,24 +4,24 @@ export const dynamic = 'force-dynamic';
 // Server-side only — never exposed to the client bundle.
 const UPSTREAM_URL =
   'https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute';
-const API_KEY = 'sk-sim-Vk9yj3QfVSZxJ8lulZTYK549u5ThZo9u';
+const API_KEY = 'sk-sim-GwQAiLwWID8U3islZzPltwAgmjlUHY5v';
 
-// The full 14-output contract — exact strings, exact order. Do not trim.
+// The verified 13-output contract — exact strings, exact order (mirrors the
+// verification curl). Do not trim.
 const SELECTED_OUTPUTS = [
   'dedup&volumenormalize.result',
-  'aggregatesemrushrows.result',
-  'queryexpansion.variants',
-  'serpfetch.result',
   'aishortlisting.primary',
   'aishortlisting.secondary',
+  'urlscoring&selection.result',
+  'alignmentscoring.scores',
+  'aggregatesemrushrows.result',
+  'serpfetch.result',
+  'compositescoring.result',
   'validationpass.primary',
   'validationpass.secondary',
   'validationpass.warning.type',
   'validationpass.warning.description',
-  'exasearch.results',
-  'urlscoring&selection.result',
-  'compositescoring.result',
-  'alignmentscoring.scores',
+  'finalresponse.data',
 ];
 
 const TOKEN_TTL_MS = 10 * 60 * 1000;
@@ -64,8 +64,8 @@ export async function GET(
     return new Response('Stream token expired. Start a new run.', { status: 410 });
   }
 
-  // Mirror the pipeline curl exactly: POST with X-API-Key, stream: true, selectedOutputs.
-  // The Arena email id is included as an additional request-body parameter.
+  // Mirror the verified pipeline curl exactly: POST with X-API-Key, stream: true,
+  // selectedOutputs. The Arena email id is included as a request-body parameter.
   let upstream: Response;
   try {
     upstream = await fetch(UPSTREAM_URL, {
