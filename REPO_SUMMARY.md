@@ -1,22 +1,22 @@
 # Repository Summary: keyword_research_agent
 
-> Auto-maintained by Sim Development. Last updated: 2026-07-29T11:43:18.038Z.
+> Auto-maintained by Sim Development. Last updated: 2026-07-30T07:16:20.647Z.
 
 ## Overview
 
-Keyword Research — expand a seed keyword into a validated, competitor-backed shortlist with live pipeline streaming.
+Live streaming keyword research agent with a Generator view and a History tab backed by the Arena buildhistory workflow and saved runs.
 
 **Repository:** `keyword-research-agent`  
-**File count:** 46
+**File count:** 51
 
 ## Features
 
-- Full-screen research form shown by default with no restored responses
-- Fresh, cleared state on every page load — results only appear after a new run
-- Live streaming pipeline progress with stage tracking
-- Competitor URL scoring, SEMrush keywords, dedup, composite and alignment panels
-- Editable final results with copy-as-table and PDF export
-- Runs persisted to Postgres for auditing (no auto-restore)
+- Streaming keyword research pipeline with live stage progress
+- Generator / History tab toggle in the header area
+- History list with keyword, client, timestamp, and top-pick preview
+- Read-only view of past run outputs
+- PDF export and copy-as-table of final results
+- Saved runs persisted via Prisma ResearchRun model
 
 ## Tech Stack
 
@@ -53,6 +53,7 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 
 ### API routes
 
+- `app/api/keyword-research/history/route.ts`
 - `app/api/keyword-research/init/route.ts`
 - `app/api/keyword-research/stream/[token]/route.ts`
 - `app/api/runs/route.ts`
@@ -67,6 +68,9 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 - `components/ErrorBoundary.tsx`
 - `components/ErrorCard.tsx`
 - `components/ExaResearchPanel.tsx`
+- `components/HistoryDetail.tsx`
+- `components/HistoryView.tsx`
+- `components/KeywordResearchApp.tsx`
 - `components/KeywordResearchClient.tsx`
 - `components/PdfDownloadButton.tsx`
 - `components/ProgressTracker.tsx`
@@ -84,6 +88,7 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 - `lib/arena-email-constants.ts`
 - `lib/arena-email.ts`
 - `lib/format.ts`
+- `lib/history.ts`
 - `lib/pdf.ts`
 - `lib/prisma.ts`
 - `lib/types.ts`
@@ -111,6 +116,7 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 - `README.md`
 - `REPO_SUMMARY.md`
 - `app/access-denied/page.tsx`
+- `app/api/keyword-research/history/route.ts`
 - `app/api/keyword-research/init/route.ts`
 - `app/api/keyword-research/stream/[token]/route.ts`
 - `app/api/runs/route.ts`
@@ -128,6 +134,9 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 - `components/ErrorBoundary.tsx`
 - `components/ErrorCard.tsx`
 - `components/ExaResearchPanel.tsx`
+- `components/HistoryDetail.tsx`
+- `components/HistoryView.tsx`
+- `components/KeywordResearchApp.tsx`
 - `components/KeywordResearchClient.tsx`
 - `components/PdfDownloadButton.tsx`
 - `components/ProgressTracker.tsx`
@@ -142,6 +151,7 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 - `lib/arena-email-constants.ts`
 - `lib/arena-email.ts`
 - `lib/format.ts`
+- `lib/history.ts`
 - `lib/pdf.ts`
 - `lib/prisma.ts`
 - `lib/types.ts`
@@ -156,6 +166,45 @@ Keyword Research — expand a seed keyword into a validated, competitor-backed s
 
 ## Latest Change
 
-- **Updated at:** 2026-07-29T11:43:18.038Z
-- **Request:** By default, clear the responses. By default, the values are shown... 
-Make the form full screen
+- **Updated at:** 2026-07-30T07:16:20.647Z
+- **Request:** Make the following changes only. Do not change any other styling, colors, spacing, copy, or layout beyond what's explicitly listed below.
+
+
+Add a "History" section to this Article Recommendation Agent tool. Requirements:
+
+1. Location & trigger: Add a "History" button/tab in the header area (next to or near the title) that toggles between the main "Generator" view and a "History" view.
+2. What gets saved: Every time the user clicks "Get Recommendations" and a result is generated, save a history entry containing:
+- Target Keyword
+- Client / Brand
+- Timestamp (date + time of generation)
+- The full generated output (the H1, headings, and article recommendations)
+3. History view UI:
+Show entries as a reverse-chronological list (newest first), each as a card showing: keyword, client, timestamp, and a short preview of the H1/title generated.
+Each card should have:
+- A "View" button/click action that loads that entry's full output back into the main results view (read-only, non-editable)
+If there's no history yet, show an empty state message like "No previous runs yet — generate your first recommendation to see it here."
+4. Persistence: Store history using in-memory React state (use useState/array), since browser storage isn't available in this environment. Note in a comment that this resets on page reload, and if the user wants persistence across sessions, they'd need to connect a backend/database.
+5. Styling: Match the existing design — same rounded cards, purple/indigo accent color, clean spacing, and typography already used in the tool.
+
+Keep the existing Generator view and functionality fully intact — just add History as an additional view/tab.
+
+
+
+HIstory API :
+
+curl -X POST \
+  -H "X-API-Key: use the exisiting key " \
+  -H "Content-Type: application/json" \
+  -d '{"email":"example","type":"keyword_research","stream":true,"selectedOutputs":["buildhistory.result"]}' \
+  https://agent.thearena.ai/api/workflows/38458816-0871-4c2f-8545-39654a5530cc/execute
+
+
+
+
+
+For this API :
+https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute
+
+Include email as a parameter in the request body ...
+
+Remove SEMrush units: at the top

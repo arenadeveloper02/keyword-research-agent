@@ -120,3 +120,15 @@ export interface PdfExportData {
   compositeCandidates?: CompositeCandidate[];
   alignmentScores?: ScoredKeyword[];
 }
+
+// A single History entry shown in the History tab. Entries are loaded from the
+// Arena buildhistory workflow and the saved-runs API, then coerced into this shape.
+export interface HistoryEntry {
+  id: string;
+  keyword: string;
+  client: string;
+  intent: string;
+  createdAt: string | null;
+  preview: string | null;
+  output: ResultPayload | null;
+}

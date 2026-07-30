@@ -35,12 +35,13 @@ export async function GET(
 ): Promise<Response> {
   const { token } = await params;
 
-  let payload: { keyword?: unknown; intent?: unknown; client?: unknown; t?: unknown };
+  let payload: { keyword?: unknown; intent?: unknown; client?: unknown; email?: unknown; t?: unknown };
   try {
     payload = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as {
       keyword?: unknown;
       intent?: unknown;
       client?: unknown;
+      email?: unknown;
       t?: unknown;
     };
   } catch {
@@ -64,6 +65,7 @@ export async function GET(
   }
 
   // Mirror the pipeline curl exactly: POST with X-API-Key, stream: true, selectedOutputs.
+  // The Arena email id is included as an additional request-body parameter.
   let upstream: Response;
   try {
     upstream = await fetch(UPSTREAM_URL, {
@@ -76,6 +78,7 @@ export async function GET(
         keyword,
         intent: typeof payload.intent === 'string' ? payload.intent : 'commercial',
         client: typeof payload.client === 'string' ? payload.client : '',
+        email: typeof payload.email === 'string' ? payload.email : '',
         stream: true,
         selectedOutputs: SELECTED_OUTPUTS,
       }),

@@ -1,10 +1,10 @@
 import ErrorBoundary from '@/components/ErrorBoundary';
-import KeywordResearchClient from '@/components/KeywordResearchClient';
+import KeywordResearchApp from '@/components/KeywordResearchApp';
 
 export default function Page() {
   return (
     <ErrorBoundary>
-      <KeywordResearchClient />
+      <KeywordResearchApp />
     </ErrorBoundary>
   );
 }
