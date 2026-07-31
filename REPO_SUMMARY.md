@@ -172,3 +172,5 @@ Live streaming keyword research app — expands a seed keyword into a validated,
 - **Request:** Make the following changes only. Do not change any other styling, colors, spacing, copy, or layout beyond what's explicitly listed below.
 
 1) In the history view 'SERP Results', 'SEMrush Keywords' are missing; these details are already present in the API response Update the UI with these values
+
+**NOTE: dont remove updatedAt in any tables **
