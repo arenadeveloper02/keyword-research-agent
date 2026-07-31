@@ -7,6 +7,8 @@ import { formatDateTime, formatVolume } from '@/lib/format';
 import { copyResultTable } from '@/lib/copy-table';
 import QueryVariantsPanel from '@/components/QueryVariantsPanel';
 import CompetitorUrlsPanel from '@/components/CompetitorUrlsPanel';
+import SerpResultsPanel from '@/components/SerpResultsPanel';
+import SemrushKeywordsPanel from '@/components/SemrushKeywordsPanel';
 import DedupKeywordsPanel from '@/components/DedupKeywordsPanel';
 import CompositeScoringPanel from '@/components/CompositeScoringPanel';
 import AlignmentScoresPanel from '@/components/AlignmentScoresPanel';
@@ -19,8 +21,9 @@ interface HistoryDetailProps {
 }
 
 // Read-only view of a past run, mirroring the generator output sections in
-// order: Query Variants, URL Scoring, Deduplicated & Normalized Keywords,
-// Composite Scoring, Alignment Scores, All Source Keywords, then Final results.
+// order: Query Variants, URL Scoring, SERP Results, SEMrush Keywords,
+// Deduplicated & Normalized Keywords, Composite Scoring, Alignment Scores,
+// All Source Keywords, then Final results.
 // No editing is allowed here — the generator view remains the only place
 // results can be edited. Copy-as-table and PDF download ARE available so past
 // runs can be exported the same way as fresh ones.
@@ -36,6 +39,8 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
       }
     : entry.output;
   const intentValue: Intent = entry.intent === 'informational' ? 'informational' : 'commercial';
+
+  const semrushUrls = (full?.urls ?? []).filter((u) => (u.keywordsFound?.length ?? 0) > 0);
 
   const pdfData: PdfExportData | null = result
     ? {
@@ -101,6 +106,14 @@ export default function HistoryDetail({ entry, onBack }: HistoryDetailProps) {
 
       {full?.urls && full.urls.length > 0 && (
         <CompetitorUrlsPanel urls={full.urls} done candidateCount={null} />
+      )}
+
+      {full?.serpResults && full.serpResults.length > 0 && (
+        <SerpResultsPanel results={full.serpResults} />
+      )}
+
+      {semrushUrls.length > 0 && (
+        <SemrushKeywordsPanel urls={semrushUrls} done />
       )}
 
       {full?.normalizedKeywords && full.normalizedKeywords.length > 0 && (

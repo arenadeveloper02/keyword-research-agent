@@ -1,19 +1,27 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+generator client {
+  provider = "prisma-client-js"
+}
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String?
+  createdAt DateTime @default(now())
+}
+
 model ResearchRun {
   id        String   @id @default(cuid())
-  tool      String
-  label     String
-  status    String
-  inputs    Json
-  output    Json
+  tool      String   @default("keyword-research")
+  label     String   @default("")
+  status    String   @default("completed")
+  inputs    Json?
+  output    Json?
   createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([tool, createdAt])
 }
