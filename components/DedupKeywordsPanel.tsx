@@ -1,32 +1,36 @@
 "use client"
 
 import type { NormalizedKeyword } from '@/lib/types';
-import { formatVolumeCompact } from '@/lib/format';
+import { formatVolume } from '@/lib/format';
 
 interface DedupKeywordsPanelProps {
   keywords: NormalizedKeyword[];
 }
 
 export default function DedupKeywordsPanel({ keywords }: DedupKeywordsPanelProps) {
+  if (keywords.length === 0) return null;
   return (
     <section className="animate-rise rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Deduplicated &amp; Normalized Keywords
-        <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">{keywords.length}</span>
+        Deduplicated keywords ({keywords.length})
       </h2>
-      <p className="mt-0.5 text-xs text-slate-400">{keywords.length.toLocaleString('en-US')} unique keywords</p>
-      <div className="mt-3 flex max-h-72 flex-wrap gap-1.5 overflow-y-auto">
-        {keywords.map((k, i) => (
-          <span
-            key={`${k.keyword}-${i}`}
-            className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700"
-          >
-            {k.keyword}
-            <span className={k.volume === 0 ? 'text-slate-400' : 'font-medium text-slate-500'}>
-              {formatVolumeCompact(k.volume)}
-            </span>
-          </span>
-        ))}
+      <div className="mt-3 max-h-80 overflow-auto rounded-xl border border-slate-100">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-4 py-2 font-medium">Keyword</th>
+              <th className="px-4 py-2 text-right font-medium">Volume</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {keywords.map((k, i) => (
+              <tr key={`${k.keyword}-${i}`}>
+                <td className="px-4 py-2 text-slate-800">{k.keyword}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{formatVolume(k.volume)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
   );

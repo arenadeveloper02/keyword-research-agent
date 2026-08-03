@@ -1,153 +1,106 @@
 "use client"
 
-import { Loader2, RotateCcw, Search, XCircle } from 'lucide-react';
-import type { Intent } from '@/lib/types';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
+import { Loader2, Search } from 'lucide-react';
+import type { Intent, RunInputs } from '@/lib/types';
 
 interface ResearchFormProps {
-  keyword: string;
-  intent: Intent;
-  client: string;
-  running: boolean;
-  initError: string | null;
-  onKeywordChange: (value: string) => void;
-  onIntentChange: (value: Intent) => void;
-  onClientChange: (value: string) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-  onReset: () => void;
+  onSubmit: (inputs: RunInputs) => void;
+  loading: boolean;
 }
 
-const INTENT_CARDS: { value: Intent; title: string; description: string }[] = [
-  { value: 'commercial', title: 'Commercial / Transactional', description: 'Service pages, pricing, booking' },
-  { value: 'informational', title: 'Informational / Educational', description: 'Guides, FAQs, how-to content' },
-];
+export default function ResearchForm({ onSubmit, loading }: ResearchFormProps) {
+  const [keyword, setKeyword] = useState('');
+  const [intent, setIntent] = useState<Intent>('commercial');
+  const [client, setClient] = useState('');
 
-export default function ResearchForm({
-  keyword,
-  intent,
-  client,
-  running,
-  initError,
-  onKeywordChange,
-  onIntentChange,
-  onClientChange,
-  onSubmit,
-  onCancel,
-  onReset,
-}: ResearchFormProps) {
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const trimmed = keyword.trim();
+    if (!trimmed || loading) return;
+    const trimmedClient = client.trim();
+    onSubmit({
+      keyword: trimmed,
+      intent,
+      client: trimmedClient.length > 0 ? trimmedClient : undefined,
+    });
+  }
+
   return (
     <form
-      className="mx-auto w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!running) onSubmit();
-      }}
+      onSubmit={handleSubmit}
+      className="animate-rise rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
     >
-      <div className="space-y-5">
-        <div>
-          <label htmlFor="seed-keyword" className="block text-sm font-medium text-slate-700">
-            Seed Keyword <span className="text-rose-500">*</span>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="seed-keyword"
+            className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+          >
+            Seed keyword
           </label>
           <input
             id="seed-keyword"
-            type="text"
             value={keyword}
-            onChange={(e) => onKeywordChange(e.target.value)}
-            disabled={running}
-            required
+            onChange={(e) => setKeyword(e.target.value)}
             placeholder="e.g. project management software"
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-50 disabled:text-slate-400"
+            required
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
           />
         </div>
-
-        <div>
-          <span className="block text-sm font-medium text-slate-700">Page Intent</span>
-          <div className="mt-1.5 grid gap-3 sm:grid-cols-2" role="group" aria-label="Page intent">
-            {INTENT_CARDS.map((card) => {
-              const selected = intent === card.value;
-              return (
-                <button
-                  key={card.value}
-                  type="button"
-                  disabled={running}
-                  onClick={() => onIntentChange(card.value)}
-                  aria-pressed={selected}
-                  className={`rounded-xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
-                    selected
-                      ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500'
-                      : 'border-slate-200 bg-white hover:border-slate-300'
-                  } ${running ? 'cursor-not-allowed opacity-60' : ''}`}
-                >
-                  <span className={`block text-sm font-semibold ${selected ? 'text-indigo-700' : 'text-slate-800'}`}>
-                    {card.title}
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">{card.description}</span>
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="search-intent"
+            className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+          >
+            Search intent
+          </label>
+          <select
+            id="search-intent"
+            value={intent}
+            onChange={(e) =>
+              setIntent(e.target.value === 'informational' ? 'informational' : 'commercial')
+            }
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          >
+            <option value="commercial">Commercial</option>
+            <option value="informational">Informational</option>
+          </select>
         </div>
-
-        <div>
-          <label htmlFor="client-brand" className="block text-sm font-medium text-slate-700">
-            Client / brand <span className="text-slate-400">(optional)</span>
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor="client-name"
+            className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+          >
+            Client (optional)
           </label>
           <input
-            id="client-brand"
-            type="text"
+            id="client-name"
             value={client}
-            onChange={(e) => onClientChange(e.target.value)}
-            disabled={running}
-            placeholder="e.g. Acme Corp"
-            className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-50 disabled:text-slate-400"
+            onChange={(e) => setClient(e.target.value)}
+            placeholder="Client or project name"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
           />
         </div>
-
-        {initError && (
-          <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {initError}
-          </p>
-        )}
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            disabled={running || keyword.trim().length === 0}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {running ? (
-              <>
-                <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
-                {'Researching…'}
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4" aria-hidden="true" />
-                Start Research
-              </>
-            )}
-          </button>
-          {running ? (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            >
-              <XCircle className="h-4 w-4" aria-hidden="true" />
-              Cancel
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onReset}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            >
-              <RotateCcw className="h-4 w-4" aria-hidden="true" />
-              Reset
-            </button>
-          )}
-        </div>
       </div>
+      <button
+        type="submit"
+        disabled={loading || keyword.trim().length === 0}
+        className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {loading ? (
+          <>
+            <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
+            Researching…
+          </>
+        ) : (
+          <>
+            <Search className="h-4 w-4" aria-hidden="true" />
+            Run research
+          </>
+        )}
+      </button>
     </form>
   );
 }

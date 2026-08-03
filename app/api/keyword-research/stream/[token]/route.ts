@@ -9,19 +9,19 @@ const API_KEY = 'sk-sim-GwQAiLwWID8U3islZzPltwAgmjlUHY5v';
 // The verified 13-output contract — exact strings, exact order (mirrors the
 // verification curl). Do not trim.
 const SELECTED_OUTPUTS = [
-  'dedup&volumenormalize.result',
-  'aishortlisting.primary',
-  'aishortlisting.secondary',
-  'urlscoring&selection.result',
   'alignmentscoring.scores',
-  'aggregatesemrushrows.result',
-  'serpfetch.result',
-  'compositescoring.result',
   'validationpass.primary',
   'validationpass.secondary',
   'validationpass.warning.type',
   'validationpass.warning.description',
-  'finalresponse.data',
+  'queryexpansion.variants',
+  'aishortlisting.primary',
+  'aishortlisting.secondary',
+  'compositescoring.result',
+  'serpfetch.result',
+  'urlscoring&selection.result',
+  'aggregatesemrushrows.result',
+  'dedup&volumenormalize.result',
 ];
 
 const TOKEN_TTL_MS = 10 * 60 * 1000;
