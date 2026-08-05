@@ -1,5 +1,31 @@
 import type { PdfExportData, SourceKeyword } from '@/lib/types';
 
+// ─── PDF generation method ───────────────────────────────────────────────────
+// This app draws the PDF directly with jsPDF + jspdf-autotable (a manual PDF
+// layout engine) — it does NOT screenshot the DOM (html2canvas) or use a
+// headless browser. That means the PDF tables are re-laid-out by autotable's
+// own engine, and the previous implementation let it AUTO-SIZE every column
+// (the equivalent of `table-layout: auto`). Column widths were recalculated
+// per table and per page from cell content, so widths shifted between
+// sections/pages and no columns carried the UI's right-alignment for numeric
+// cells. Root causes fixed here:
+//   1. Auto column sizing → now every table declares explicit fixed column
+//      widths as fractions of the content width (table-layout: fixed parity).
+//   2. Missing per-column alignment → numeric columns (Volume, CPC, Position,
+//      Score, Alignment, URL Frequency) are right-aligned in body AND header,
+//      exactly like the on-screen `text-right` cells.
+//   3. Page-break tearing → rowPageBreak: 'avoid' keeps rows intact (never
+//      split mid-row/mid-cell) and showHead: 'everyPage' repeats the header
+//      row after each break, like a sticky header.
+//   4. Styling drift → header fill/text, row divider color, cell padding and
+//      font size now mirror the UI table styles (slate-50 header, slate-500
+//      header text, slate-800 body text, slate-100 dividers, px-4/py-2-ish
+//      padding), so borders/padding/alignment match the live tables.
+// A headless-Chromium (Puppeteer/Playwright) render would give true pixel
+// parity, but it requires a server rendering dependency; with fixed widths +
+// explicit alignment autotable is deterministic and matches the UI reliably.
+// ─────────────────────────────────────────────────────────────────────────────
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -11,6 +37,22 @@ function slugify(value: string): string {
 function getFinalY(doc: unknown, fallback: number): number {
   const table = (doc as { lastAutoTable?: { finalY?: number } }).lastAutoTable;
   return typeof table?.finalY === 'number' ? table.finalY : fallback;
+}
+
+// UI-parity table colors (the app's remapped Tailwind slate scale — see tailwind.config.ts).
+const HEAD_FILL: [number, number, number] = [247, 248, 249]; // slate-50 header background
+const HEAD_TEXT: [number, number, number] = [133, 137, 151]; // slate-500 header text
+const BODY_TEXT: [number, number, number] = [65, 68, 77]; // slate-800 body text
+const GRID_LINE: [number, number, number] = [239, 240, 242]; // slate-100 row dividers
+
+interface UiColumn {
+  header: string;
+  // Fraction of the available content width. Fractions per table sum to 1, so
+  // every column has an explicit fixed width — the PDF equivalent of
+  // `table-layout: fixed` with per-column widths. Widths never recalculate
+  // between pages or shift based on cell content.
+  fraction: number;
+  align?: 'left' | 'right';
 }
 
 export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
@@ -35,6 +77,63 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
       doc.addPage();
       y = margin;
     }
+  };
+
+  // Shared UI-parity table renderer. Every table in the report goes through
+  // this so column widths, alignment, borders, padding and page-break behavior
+  // are identical to the on-screen tables:
+  //   - explicit fixed column widths (no auto re-measuring / shifting)
+  //   - numeric columns right-aligned in header AND body (matches text-right)
+  //   - slate-50 header / slate-100 dividers / slate-800 text (matches UI)
+  //   - rows never break mid-row across pages; header repeats on every page
+  const drawUiTable = (opts: { startY: number; columns: UiColumn[]; body: string[][] }): number => {
+    const columnStyles: Record<number, { cellWidth: number; halign: 'left' | 'right' }> = {};
+    opts.columns.forEach((c, i) => {
+      columnStyles[i] = {
+        cellWidth: Math.floor(contentWidth * c.fraction * 100) / 100,
+        halign: c.align ?? 'left',
+      };
+    });
+    autoTable(doc, {
+      startY: opts.startY,
+      margin: { left: margin, right: margin },
+      tableWidth: contentWidth,
+      head: [opts.columns.map((c) => c.header.toUpperCase())],
+      body: opts.body,
+      theme: 'grid',
+      styles: {
+        font: 'helvetica',
+        fontSize: 8,
+        cellPadding: { top: 5, right: 8, bottom: 5, left: 8 },
+        overflow: 'linebreak',
+        valign: 'middle',
+        textColor: BODY_TEXT,
+        lineColor: GRID_LINE,
+        lineWidth: 0.5,
+      },
+      headStyles: {
+        fillColor: HEAD_FILL,
+        textColor: HEAD_TEXT,
+        fontStyle: 'bold',
+        fontSize: 7.5,
+      },
+      columnStyles,
+      // Never split a row across a page boundary (mid-row/mid-cell tearing).
+      rowPageBreak: 'avoid',
+      // Repeat the header row after every page break (sticky-header parity).
+      showHead: 'everyPage',
+      didParseCell: (hook) => {
+        // columnStyles only affect body cells — mirror the right-alignment onto
+        // header cells so headers line up with their columns exactly like the UI.
+        if (hook.section === 'head') {
+          const col = opts.columns[hook.column.index];
+          if (col && col.align === 'right') {
+            hook.cell.styles.halign = 'right';
+          }
+        }
+      },
+    });
+    return getFinalY(doc, opts.startY);
   };
 
   // 1. Header
@@ -92,23 +191,29 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.setTextColor(0, 0, 0);
   }
 
-  // 2b2. SERP results
+  // 2b2. SERP results — # / Title / Domain (plus URL for reference), fixed widths.
   if (data.serpResults && data.serpResults.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text('SERP Results', margin, y);
     y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['Rank', 'Title', 'Domain', 'URL']],
-      body: data.serpResults.map((r) => [r.rank === null ? '—' : String(r.rank), r.title ?? '—', r.domain, r.url]),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [100, 116, 139] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
+    y =
+      drawUiTable({
+        startY: y,
+        columns: [
+          { header: '#', fraction: 0.06 },
+          { header: 'Title', fraction: 0.38 },
+          { header: 'Domain', fraction: 0.21 },
+          { header: 'URL', fraction: 0.35 },
+        ],
+        body: data.serpResults.map((r, i) => [
+          r.rank === null ? String(i + 1) : String(r.rank),
+          r.title ?? '—',
+          r.domain,
+          r.url,
+        ]),
+      }) + 28;
   }
 
   // 2c. Competitor URL scoring + SEMrush keywords by page
@@ -118,16 +223,17 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.setFontSize(13);
     doc.text('Competitor URL Scoring', margin, y);
     y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['#', 'Domain', 'URL', 'Score']],
-      body: data.urls.map((u, i) => [String(i + 1), u.domain, u.url, u.score.toFixed(2)]),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [79, 70, 229] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
+    y =
+      drawUiTable({
+        startY: y,
+        columns: [
+          { header: '#', fraction: 0.06 },
+          { header: 'Domain', fraction: 0.22 },
+          { header: 'URL', fraction: 0.6 },
+          { header: 'Score', fraction: 0.12, align: 'right' },
+        ],
+        body: data.urls.map((u, i) => [String(i + 1), u.domain, u.url, u.score.toFixed(2)]),
+      }) + 28;
 
     const urlsWithKeywords = data.urls.filter((u) => (u.keywordsFound?.length ?? 0) > 0);
     if (urlsWithKeywords.length > 0) {
@@ -142,76 +248,80 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
         doc.setFontSize(10);
         doc.text(`${u.domain} — ${u.keywordsFound?.length ?? 0} keywords`, margin, y);
         y += 8;
-        autoTable(doc, {
-          startY: y,
-          margin: { left: margin, right: margin },
-          head: [['Keyword', 'Volume']],
-          body: (u.keywordsFound ?? []).map((k) => [k.keyword, fmt(k.volume)]),
-          styles: { fontSize: 8, cellPadding: 4 },
-          headStyles: { fillColor: [100, 116, 139] },
-          rowPageBreak: 'avoid',
-        });
-        y = getFinalY(doc, y) + 18;
+        y =
+          drawUiTable({
+            startY: y,
+            columns: [
+              { header: 'Keyword', fraction: 0.75 },
+              { header: 'Volume', fraction: 0.25, align: 'right' },
+            ],
+            body: (u.keywordsFound ?? []).map((k) => [k.keyword, fmt(k.volume)]),
+          }) + 18;
       });
       y += 8;
     }
   }
 
-  // 2d. Deduplicated & normalized keywords
+  // 2d. Deduplicated & normalized keywords — Keyword | Volume (right-aligned, like the UI).
   if (data.normalizedKeywords && data.normalizedKeywords.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text(`Deduplicated & Normalized Keywords — ${data.normalizedKeywords.length} unique`, margin, y);
     y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['Keyword', 'Volume']],
-      body: data.normalizedKeywords.map((k) => [k.keyword, fmt(k.volume)]),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [100, 116, 139] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
+    y =
+      drawUiTable({
+        startY: y,
+        columns: [
+          { header: 'Keyword', fraction: 0.75 },
+          { header: 'Volume', fraction: 0.25, align: 'right' },
+        ],
+        body: data.normalizedKeywords.map((k) => [k.keyword, fmt(k.volume)]),
+      }) + 28;
   }
 
-  // 2e. Composite scoring — Keyword | Volume | Position | CPC (matches the on-screen panel).
+  // 2e. Composite scoring — Keyword | Volume | CPC | Position, in the exact
+  // column order and right-alignment of the on-screen panel.
   if (data.compositeCandidates && data.compositeCandidates.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text('Composite Scoring', margin, y);
     y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['Keyword', 'Volume', 'Position', 'CPC']],
-      body: data.compositeCandidates.map((c) => [c.keyword, fmt(c.volume), fmt(c.position), fmtCpc(c.cpc)]),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [100, 116, 139] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
+    y =
+      drawUiTable({
+        startY: y,
+        columns: [
+          { header: 'Keyword', fraction: 0.55 },
+          { header: 'Volume', fraction: 0.15, align: 'right' },
+          { header: 'CPC', fraction: 0.15, align: 'right' },
+          { header: 'Position', fraction: 0.15, align: 'right' },
+        ],
+        body: data.compositeCandidates.map((c) => [
+          c.keyword,
+          fmt(c.volume),
+          c.cpc === null ? '—' : `$${fmtCpc(c.cpc)}`,
+          fmt(c.position),
+        ]),
+      }) + 28;
   }
 
-  // 2f. Alignment scores
+  // 2f. Alignment scores — Keyword | Alignment (right-aligned).
   if (data.alignmentScores && data.alignmentScores.length > 0) {
     ensureSpace(50);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text('Alignment Scores', margin, y);
     y += 10;
-    autoTable(doc, {
-      startY: y,
-      margin: { left: margin, right: margin },
-      head: [['Keyword', 'Alignment']],
-      body: data.alignmentScores.map((k) => [k.keyword, fmtScore(k.score)]),
-      styles: { fontSize: 8, cellPadding: 4 },
-      headStyles: { fillColor: [100, 116, 139] },
-      rowPageBreak: 'avoid',
-    });
-    y = getFinalY(doc, y) + 28;
+    y =
+      drawUiTable({
+        startY: y,
+        columns: [
+          { header: 'Keyword', fraction: 0.75 },
+          { header: 'Alignment', fraction: 0.25, align: 'right' },
+        ],
+        body: data.alignmentScores.map((k) => [k.keyword, fmtScore(k.score)]),
+      }) + 28;
   }
 
   // 3. Primary keywords — each as its own block
@@ -244,22 +354,23 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     y += 12;
   });
 
-  // 4. Secondary keywords — clean table
+  // 4. Secondary keywords — # | Keyword | Volume (right-aligned), matching the
+  // UI's secondary keywords table column-for-column.
   ensureSpace(50);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.text('Secondary Keywords', margin, y);
   y += 10;
-  autoTable(doc, {
-    startY: y,
-    margin: { left: margin, right: margin },
-    head: [['Keyword', 'Volume']],
-    body: data.secondary.map((k) => [k.keyword, fmt(k.volume)]),
-    styles: { fontSize: 9, cellPadding: 5 },
-    headStyles: { fillColor: [79, 70, 229] },
-    rowPageBreak: 'avoid',
-  });
-  y = getFinalY(doc, y) + 28;
+  y =
+    drawUiTable({
+      startY: y,
+      columns: [
+        { header: '#', fraction: 0.08 },
+        { header: 'Keyword', fraction: 0.67 },
+        { header: 'Volume', fraction: 0.25, align: 'right' },
+      ],
+      body: data.secondary.map((k, i) => [String(i + 1), k.keyword, fmt(k.volume)]),
+    }) + 28;
 
   // 5. All source keywords — three tier sections
   ensureSpace(30);
@@ -284,16 +395,16 @@ export async function generateKeywordPdf(data: PdfExportData): Promise<void> {
     doc.text(`${tier.title} — ${tier.rows.length} keywords`, margin, y);
     y += 8;
     if (tier.rows.length > 0) {
-      autoTable(doc, {
-        startY: y,
-        margin: { left: margin, right: margin },
-        head: [['Keyword', 'Volume', 'URL Frequency']],
-        body: tier.rows.map((k) => [k.keyword, fmt(k.volume), String(k.urlFrequency)]),
-        styles: { fontSize: 8, cellPadding: 4 },
-        headStyles: { fillColor: [100, 116, 139] },
-        rowPageBreak: 'avoid',
-      });
-      y = getFinalY(doc, y) + 20;
+      y =
+        drawUiTable({
+          startY: y,
+          columns: [
+            { header: 'Keyword', fraction: 0.56 },
+            { header: 'Volume', fraction: 0.2, align: 'right' },
+            { header: 'URL Frequency', fraction: 0.24, align: 'right' },
+          ],
+          body: tier.rows.map((k) => [k.keyword, fmt(k.volume), String(k.urlFrequency)]),
+        }) + 20;
     } else {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
