@@ -6,22 +6,21 @@ const UPSTREAM_URL =
   'https://agent.thearena.ai/api/workflows/b056ebe3-2df8-4d6a-aa17-d90e6b5f3c7f/execute';
 const API_KEY = 'sk-sim-GwQAiLwWID8U3islZzPltwAgmjlUHY5v';
 
-// The verified 13-output contract — exact strings, exact order (mirrors the
+// The verified 12-output contract — exact strings, exact order (mirrors the
 // verification curl). Do not trim.
 const SELECTED_OUTPUTS = [
+  'dedup&volumenormalize.result',
+  'aishortlisting.primary',
+  'aishortlisting.secondary',
+  'urlscoring&selection.result',
   'alignmentscoring.scores',
+  'aggregatesemrushrows.result',
+  'serpfetch.result',
+  'compositescoring.result',
   'validationpass.primary',
   'validationpass.secondary',
   'validationpass.warning.type',
   'validationpass.warning.description',
-  'queryexpansion.variants',
-  'aishortlisting.primary',
-  'aishortlisting.secondary',
-  'compositescoring.result',
-  'serpfetch.result',
-  'urlscoring&selection.result',
-  'aggregatesemrushrows.result',
-  'dedup&volumenormalize.result',
 ];
 
 const TOKEN_TTL_MS = 10 * 60 * 1000;

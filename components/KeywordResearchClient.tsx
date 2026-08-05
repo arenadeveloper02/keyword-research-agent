@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CompetitorUrl,
   CompositeCandidate,
@@ -106,16 +106,21 @@ interface Shortlist {
   secondary: SecondaryKeyword[];
 }
 
+interface ShortlistBlock {
+  blockId: string;
+  shortlist: Shortlist;
+}
+
 interface CollectedData {
   variants: string[];
   serpResults: SerpResult[];
   selectedUrls: CompetitorUrl[];
-  mergedUrls: CompetitorUrl[];
+  semrushGroups: CompetitorUrl[];
   normalizedKeywords: NormalizedKeyword[];
   compositeCandidates: CompositeCandidate[];
   alignmentScores: ScoredKeyword[];
   allKeywords: SourceKeyword[];
-  shortlists: Shortlist[];
+  shortlistBlocks: ShortlistBlock[];
   warning: string | null;
   warningType: string | null;
 }
@@ -125,12 +130,12 @@ function emptyCollected(): CollectedData {
     variants: [],
     serpResults: [],
     selectedUrls: [],
-    mergedUrls: [],
+    semrushGroups: [],
     normalizedKeywords: [],
     compositeCandidates: [],
     alignmentScores: [],
     allKeywords: [],
-    shortlists: [],
+    shortlistBlocks: [],
     warning: null,
     warningType: null,
   };
@@ -138,7 +143,6 @@ function emptyCollected(): CollectedData {
 
 interface ExtractedData {
   variants?: string[];
-  searchQueries?: string[];
   serpResults?: SerpResult[];
   selectedUrls?: CompetitorUrl[];
   semrushGroups?: CompetitorUrl[];
@@ -146,7 +150,6 @@ interface ExtractedData {
   composite?: CompositeCandidate[];
   sourceKeywords?: SourceKeyword[];
   alignment?: ScoredKeyword[];
-  shortlists?: Shortlist[];
   warning?: string;
   warningType?: string;
 }
@@ -319,7 +322,7 @@ function mergeUrlLists(base: CompetitorUrl[], incoming: CompetitorUrl[]): Compet
 
 // Scan a streamed text buffer for complete top-level JSON values (arrays or
 // objects). Incomplete trailing values are simply skipped until more chunks
-// arrive \u2014 the final event always carries the complete outputs anyway.
+// arrive -- the final event always carries the complete outputs anyway.
 function extractJsonValues(text: string): unknown[] {
   const values: unknown[] = [];
   let depth = 0;
@@ -352,7 +355,7 @@ function extractJsonValues(text: string): unknown[] {
         try {
           values.push(JSON.parse(raw));
         } catch {
-          // incomplete or invalid fragment \u2014 ignore
+          // incomplete or invalid fragment -- ignore
         }
         start = -1;
       }
@@ -362,33 +365,87 @@ function extractJsonValues(text: string): unknown[] {
   return values;
 }
 
-// Bare result arrays streamed as chunks: alignment rows, composite candidates,
-// dedup&volumenormalize rows. Shortlist fragments (with `reasoning`) are
-// handled separately by processChunkBuffer.
+// Bare keyword arrays: alignment rows, composite candidates, dedup rows.
+// Shortlist fragments (with `reasoning`) are handled separately.
 function collectArraySignals(arr: unknown[], out: ExtractedData): void {
   if (arr.length === 0) return;
   const first = asRecord(arr[0]);
   if (typeof first.keyword !== 'string') return;
   if ('reasoning' in first || 'rationale' in first) return;
   if ('alignment' in first) {
-    const rows = coerceAlignment(arr);
-    if (rows.length > 0) out.alignment = rows;
+    if (!(out.alignment && out.alignment.length > 0)) {
+      const rows = coerceAlignment(arr);
+      if (rows.length > 0) out.alignment = rows;
+    }
     return;
   }
   if ('compositeScore' in first) {
-    const rows = coerceSourceKeywords(arr);
-    if (rows.length > 0) out.sourceKeywords = rows;
-    const composite = coerceComposite(arr);
-    if (composite.length > 0) out.composite = composite;
+    if (!(out.sourceKeywords && out.sourceKeywords.length > 0)) {
+      const rows = coerceSourceKeywords(arr);
+      if (rows.length > 0) out.sourceKeywords = rows;
+    }
+    if (!(out.composite && out.composite.length > 0)) {
+      const composite = coerceComposite(arr);
+      if (composite.length > 0) out.composite = composite;
+    }
     return;
   }
-  if ('urlFrequency' in first || 'position' in first || 'cpc' in first) {
-    const composite = coerceComposite(arr);
-    if (composite.length > 0) out.composite = composite;
+  // dedup&volumenormalize candidates: urlFrequency / volumeScore / position / cpc
+  if (!(out.normalized && out.normalized.length > 0)) {
+    const rows = coerceNormalized(arr);
+    if (rows.length > 0) out.normalized = rows;
+  }
+}
+
+// Classify any array found in the payload by element shape and key hint.
+function classifyArray(arr: unknown[], out: ExtractedData, keyHint: string): void {
+  if (arr.length === 0) return;
+  const strings = arr.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+  if (strings.length === arr.length) {
+    if (
+      (keyHint.includes('queries') || keyHint.includes('variants')) &&
+      !(out.variants && out.variants.length > 0)
+    ) {
+      out.variants = strings;
+    }
     return;
   }
-  const rows = coerceNormalized(arr);
-  if (rows.length > 0) out.normalized = rows;
+  const first = asRecord(arr[0]);
+  // SEMrush rows -> group by source URL for the "keywords by page" panel.
+  if (typeof first.Keyword === 'string' || typeof first._sourceUrl === 'string') {
+    if (!(out.semrushGroups && out.semrushGroups.length > 0)) {
+      const groups = groupSemrushRows(arr);
+      if (groups.length > 0) out.semrushGroups = groups;
+    }
+    return;
+  }
+  // SERP organic entries carry `link`.
+  if (typeof first.link === 'string') {
+    if (!(out.serpResults && out.serpResults.length > 0)) {
+      const rows = coerceSerpOrganic(arr);
+      if (rows.length > 0) out.serpResults = rows;
+    }
+    return;
+  }
+  // Scored / selected competitor URLs.
+  if (typeof first.url === 'string') {
+    if ('score' in first || 'scoreBreakdown' in first || keyHint.includes('selectedurls')) {
+      if (!(out.selectedUrls && out.selectedUrls.length > 0)) {
+        const urls = coerceSelectedUrls(arr);
+        if (urls.length > 0) out.selectedUrls = urls;
+      }
+    }
+    return;
+  }
+  if (typeof first.keyword !== 'string') return;
+  if ('alignment' in first || keyHint.includes('scores')) {
+    if (!(out.alignment && out.alignment.length > 0)) {
+      const rows = coerceAlignment(arr);
+      if (rows.length > 0) out.alignment = rows;
+    }
+    return;
+  }
+  collectArraySignals(arr, out);
 }
 
 // Recursively walk any upstream value (streamed chunk JSON, the final event
@@ -398,243 +455,96 @@ function extractSignals(value: unknown, out: ExtractedData, depth = 0): void {
   if (depth > 6) return;
   const v = parseMaybeJson(value);
   if (Array.isArray(v)) {
-    const strings = v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
-    if (strings.length > 0 && strings.length === v.length) {
-      if (strings.every((s) => !/^https?:\/\//i.test(s))) {
-        out.variants = strings;
-      }
-      return;
-    }
-    collectArraySignals(v, out);
+    classifyArray(v, out, '');
     return;
   }
   if (typeof v !== 'object' || v === null) return;
   const rec = v as Record<string, unknown>;
-
-  const aiShortlist: Shortlist = { primary: [], secondary: [] };
-  const validationShortlist: Shortlist = { primary: [], secondary: [] };
-
-  for (const [key, rawVal] of Object.entries(rec)) {
-    const k = sanitizeKey(key);
-    const val = parseMaybeJson(rawVal);
-
-    if (k.includes('queryexpansion') || k === 'variants' || k.endsWith('variants')) {
-      const arr = asArray(val).filter((x): x is string => typeof x === 'string' && x.length > 0);
-      if (arr.length > 0) out.variants = arr;
-      continue;
-    }
-    if (k.includes('serpfetch')) {
-      const inner = asRecord(val);
-      const organic = Array.isArray(val)
-        ? val
-        : (inner.organic ?? asRecord(inner.result).organic ?? inner.result);
-      const rows = coerceSerpOrganic(organic);
-      if (rows.length > 0) out.serpResults = rows;
-      continue;
-    }
-    if (k.includes('urlscoring')) {
-      const inner = asRecord(val);
-      const selected = Array.isArray(val)
-        ? val
-        : (inner.selectedUrls ?? asRecord(inner.result).selectedUrls ?? inner.result);
-      const rows = coerceSelectedUrls(selected);
-      if (rows.length > 0) out.selectedUrls = rows;
-      continue;
-    }
-    if (k.includes('aggregatesemrush')) {
-      const inner = asRecord(val);
-      const rows = Array.isArray(val) ? val : (inner.rows ?? asRecord(inner.result).rows ?? inner.result);
-      const grouped = groupSemrushRows(rows);
-      if (grouped.length > 0) out.semrushGroups = grouped;
-      continue;
-    }
-    if (k.includes('dedup')) {
-      const inner = asRecord(val);
-      const rows = Array.isArray(val) ? val : (inner.rows ?? inner.result ?? val);
-      const normalized = coerceNormalized(rows);
-      if (normalized.length > 0) out.normalized = normalized;
-      continue;
-    }
-    if (k.includes('compositescoring')) {
-      const inner = asRecord(val);
-      const rows = Array.isArray(val) ? val : (inner.result ?? val);
-      const composite = coerceComposite(rows);
-      if (composite.length > 0) out.composite = composite;
-      const source = coerceSourceKeywords(rows);
-      if (source.length > 0) out.sourceKeywords = source;
-      continue;
-    }
-    if (k.includes('alignmentscoring')) {
-      const inner = asRecord(val);
-      const rows = Array.isArray(val) ? val : (inner.scores ?? inner.result ?? val);
-      const scores = coerceAlignment(rows);
-      if (scores.length > 0) out.alignment = scores;
-      continue;
-    }
-    if (k.includes('aishortlisting') || k.includes('validationpass')) {
-      const target = k.includes('validationpass') ? validationShortlist : aiShortlist;
-      if (k.includes('warning')) {
-        if (k.includes('type')) {
-          if (typeof val === 'string' && val.trim().length > 0) out.warningType = val;
-        } else if (k.includes('description')) {
-          if (typeof val === 'string' && val.trim().length > 0) out.warning = val;
-        } else {
-          const w = asRecord(val);
-          const desc =
-            typeof w.description === 'string'
-              ? w.description
-              : typeof val === 'string' && val.trim().length > 0
-                ? val
-                : null;
-          const type = typeof w.type === 'string' ? w.type : null;
-          if (desc) out.warning = desc;
-          if (type) out.warningType = type;
-        }
-        continue;
-      }
-      if (k.includes('primary')) {
-        const rows = coercePrimary(val);
-        if (rows.length > 0) target.primary = rows;
-        continue;
-      }
-      if (k.includes('secondary')) {
-        const rows = coerceSecondary(val);
-        if (rows.length > 0) target.secondary = rows;
-        continue;
-      }
-      const inner = asRecord(val);
-      const p = coercePrimary(inner.primary);
-      const s = coerceSecondary(inner.secondary);
-      if (p.length > 0) target.primary = p;
-      if (s.length > 0) target.secondary = s;
+  for (const [rawKey, raw] of Object.entries(rec)) {
+    const key = sanitizeKey(rawKey);
+    const val = parseMaybeJson(raw);
+    if (Array.isArray(val)) {
+      classifyArray(val, out, key);
       continue;
     }
     if (typeof val === 'object' && val !== null) {
       extractSignals(val, out, depth + 1);
     }
   }
-
-  if (aiShortlist.primary.length > 0 || aiShortlist.secondary.length > 0) {
-    out.shortlists = [...(out.shortlists ?? []), aiShortlist];
-  }
-  if (validationShortlist.primary.length > 0 || validationShortlist.secondary.length > 0) {
-    out.shortlists = [...(out.shortlists ?? []), validationShortlist];
-  }
 }
 
-// Streamed chunk text can carry bare JSON fragments. Shortlist fragments
-// (entries with `reasoning`) become shortlist candidates; other recognizable
-// arrays go through collectArraySignals; objects go through extractSignals.
-function processChunkBuffer(buffer: string, out: ExtractedData): void {
-  const values = extractJsonValues(buffer);
-  for (const value of values) {
-    if (Array.isArray(value)) {
-      const first = asRecord(value[0]);
-      if (typeof first.keyword === 'string' && ('reasoning' in first || 'rationale' in first)) {
-        const primary = coercePrimary(value);
-        if (primary.length > 0) {
-          out.shortlists = [...(out.shortlists ?? []), { primary, secondary: [] }];
-        }
-        continue;
+// Extract the { primary, secondary } shortlist from a block value (final event).
+function extractShortlist(value: unknown): Shortlist | null {
+  const rec = asRecord(parseMaybeJson(value));
+  const primary = coercePrimary(parseMaybeJson(rec.primary));
+  const secondary = coerceSecondary(parseMaybeJson(rec.secondary));
+  if (primary.length === 0 && secondary.length === 0) return null;
+  return { primary, secondary };
+}
+
+// Find validation warning type / description anywhere in the payload. Also
+// tolerates the raw pass-through block whose `data` string is not valid JSON
+// (e.g. `"warning": Removed duplicate ...` without quotes).
+function scanWarning(value: unknown, out: ExtractedData, depth = 0): void {
+  if (depth > 6 || value === null || value === undefined) return;
+  if (typeof value === 'string') {
+    const parsed = parseMaybeJson(value);
+    if (typeof parsed !== 'string') {
+      scanWarning(parsed, out, depth + 1);
+      return;
+    }
+    if (!out.warning && value.includes('"warning"')) {
+      const m = value.match(/"warning"\s*:\s*"?([^"}\n]+)"?/);
+      if (m && m[1]) {
+        const text = m[1].trim();
+        if (text && text.toLowerCase() !== 'null') out.warning = text;
       }
-      collectArraySignals(value, out);
-      continue;
     }
-    if (typeof value === 'object' && value !== null) {
-      extractSignals(value, out);
+    return;
+  }
+  if (Array.isArray(value) || typeof value !== 'object') return;
+  const rec = value as Record<string, unknown>;
+  for (const [rawKey, v] of Object.entries(rec)) {
+    const key = sanitizeKey(rawKey);
+    if (key.includes('warning')) {
+      if (typeof v === 'string' && v.trim().length > 0) {
+        if (key.includes('type')) {
+          if (!out.warningType) out.warningType = v.trim();
+        } else if (!out.warning) {
+          out.warning = v.trim();
+        }
+      } else if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+        const w = v as Record<string, unknown>;
+        if (!out.warningType && typeof w.type === 'string' && w.type.trim().length > 0) {
+          out.warningType = w.type.trim();
+        }
+        const desc =
+          typeof w.description === 'string'
+            ? w.description
+            : typeof w.message === 'string'
+              ? w.message
+              : '';
+        if (!out.warning && desc.trim().length > 0) out.warning = desc.trim();
+      }
+    } else if (typeof v === 'object' && v !== null) {
+      scanWarning(v, out, depth + 1);
+    } else if (typeof v === 'string' && v.includes('warning')) {
+      scanWarning(v, out, depth + 1);
     }
-  }
-}
-
-function applyExtracted(prev: CollectedData, e: ExtractedData): CollectedData {
-  const next: CollectedData = { ...prev };
-  if (e.variants && e.variants.length > 0) next.variants = e.variants;
-  if (e.serpResults && e.serpResults.length > 0) next.serpResults = e.serpResults;
-  if (e.selectedUrls && e.selectedUrls.length > 0) {
-    next.selectedUrls = e.selectedUrls;
-    next.mergedUrls = mergeUrlLists(next.mergedUrls, e.selectedUrls);
-  }
-  if (e.semrushGroups && e.semrushGroups.length > 0) {
-    const base = next.mergedUrls.length > 0 ? next.mergedUrls : next.selectedUrls;
-    next.mergedUrls = mergeUrlLists(base, e.semrushGroups);
-  }
-  if (e.normalized && e.normalized.length > 0) next.normalizedKeywords = e.normalized;
-  if (e.composite && e.composite.length > 0) next.compositeCandidates = e.composite;
-  if (e.alignment && e.alignment.length > 0) next.alignmentScores = e.alignment;
-  if (e.sourceKeywords && e.sourceKeywords.length > 0) next.allKeywords = e.sourceKeywords;
-  if (e.shortlists && e.shortlists.length > 0) next.shortlists = [...next.shortlists, ...e.shortlists];
-  if (e.warning) next.warning = e.warning;
-  if (e.warningType) next.warningType = e.warningType;
-  return next;
-}
-
-function computeStages(c: CollectedData, final: boolean): Record<Stage, StageStatus> {
-  if (final) return { ...ALL_DONE_STAGES };
-  const done: Record<Stage, boolean> = {
-    variants: c.variants.length > 0,
-    search: c.serpResults.length > 0,
-    url_scoring: c.selectedUrls.length > 0,
-    semrush: c.mergedUrls.some((u) => (u.keywordsFound?.length ?? 0) > 0),
-    analysis: c.alignmentScores.length > 0 || c.normalizedKeywords.length > 0,
-    scoring: c.shortlists.length > 0 || c.compositeCandidates.length > 0,
-    validation: false,
-  };
-  const stages: Record<Stage, StageStatus> = { ...INITIAL_STAGES };
-  let activeSet = false;
-  for (const stage of STAGE_ORDER) {
-    if (done[stage]) {
-      stages[stage] = 'done';
-    } else if (!activeSet) {
-      stages[stage] = 'active';
-      activeSet = true;
-    }
-  }
-  return stages;
-}
-
-async function saveRun(
-  runInputs: RunInputs,
-  finalResult: ResultPayload,
-  data: CollectedData
-): Promise<void> {
-  const output: SavedRunOutput = {
-    primary: finalResult.primary,
-    secondary: finalResult.secondary,
-    warning: finalResult.warning ?? null,
-    warningType: finalResult.warningType ?? null,
-    allKeywords: data.allKeywords,
-    variants: data.variants,
-    urls: data.mergedUrls.length > 0 ? data.mergedUrls : data.selectedUrls,
-    serpResults: data.serpResults,
-    normalizedKeywords: data.normalizedKeywords,
-    compositeCandidates: data.compositeCandidates,
-    alignmentScores: data.alignmentScores,
-  };
-  try {
-    await fetch('/api/runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tool: 'keyword-research',
-        label: runInputs.keyword,
-        status: 'completed',
-        inputs: runInputs,
-        output,
-      }),
-    });
-  } catch {
-    // saving is best-effort \u2014 the run already rendered in the UI
   }
 }
 
 export default function KeywordResearchClient() {
   const [status, setStatus] = useState<RunStatus>('idle');
-  const [stages, setStages] = useState<Record<Stage, StageStatus>>(INITIAL_STAGES);
   const [inputs, setInputs] = useState<RunInputs | null>(null);
   const [collected, setCollected] = useState<CollectedData>(emptyCollected());
   const [result, setResult] = useState<ResultPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
+  const chunkBuffersRef = useRef<Map<string, string>>(new Map());
+  const collectedRef = useRef<CollectedData>(emptyCollected());
+  const savedRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -642,18 +552,150 @@ export default function KeywordResearchClient() {
     };
   }, []);
 
-  async function startRun(runInputs: RunInputs): Promise<void> {
+  const running = status === 'initializing' || status === 'streaming';
+
+  function commitCollected(next: CollectedData): void {
+    collectedRef.current = next;
+    setCollected(next);
+  }
+
+  function mergeIntoCollected(prev: CollectedData, ex: ExtractedData): CollectedData {
+    return {
+      variants: ex.variants && ex.variants.length > 0 ? ex.variants : prev.variants,
+      serpResults: ex.serpResults && ex.serpResults.length > 0 ? ex.serpResults : prev.serpResults,
+      selectedUrls:
+        ex.selectedUrls && ex.selectedUrls.length > 0 ? ex.selectedUrls : prev.selectedUrls,
+      semrushGroups:
+        ex.semrushGroups && ex.semrushGroups.length > 0 ? ex.semrushGroups : prev.semrushGroups,
+      normalizedKeywords:
+        ex.normalized && ex.normalized.length > 0 ? ex.normalized : prev.normalizedKeywords,
+      compositeCandidates:
+        ex.composite && ex.composite.length > 0 ? ex.composite : prev.compositeCandidates,
+      alignmentScores:
+        ex.alignment && ex.alignment.length > 0 ? ex.alignment : prev.alignmentScores,
+      allKeywords:
+        ex.sourceKeywords && ex.sourceKeywords.length > 0 ? ex.sourceKeywords : prev.allKeywords,
+      shortlistBlocks: prev.shortlistBlocks,
+      warning: prev.warning ?? ex.warning ?? null,
+      warningType: prev.warningType ?? ex.warningType ?? null,
+    };
+  }
+
+  function applyExtracted(ex: ExtractedData, shortlistBlock?: ShortlistBlock): void {
+    const prev = collectedRef.current;
+    const next = mergeIntoCollected(prev, ex);
+    if (shortlistBlock) {
+      const others = prev.shortlistBlocks.filter((b) => b.blockId !== shortlistBlock.blockId);
+      next.shortlistBlocks = [...others, shortlistBlock];
+    }
+    commitCollected(next);
+  }
+
+  // Streaming chunks: the buffer for a block may contain several bare JSON
+  // arrays (e.g. the shortlist stream emits the primary array followed by the
+  // secondary array). Re-scan the whole buffer on every chunk.
+  function handleChunk(blockId: string, chunk: string): void {
+    const buffers = chunkBuffersRef.current;
+    const buffer = (buffers.get(blockId) ?? '') + chunk;
+    buffers.set(blockId, buffer);
+    const values = extractJsonValues(buffer);
+    const ex: ExtractedData = {};
+    const reasoningArrays: unknown[][] = [];
+    for (const v of values) {
+      if (Array.isArray(v) && v.length > 0) {
+        const first = asRecord(v[0]);
+        if (typeof first.keyword === 'string' && ('reasoning' in first || 'rationale' in first)) {
+          reasoningArrays.push(v);
+          continue;
+        }
+      }
+      extractSignals(v, ex);
+      scanWarning(v, ex);
+    }
+    let shortlistBlock: ShortlistBlock | undefined;
+    if (reasoningArrays.length > 0) {
+      const primary = coercePrimary(reasoningArrays[0]);
+      const secondary = reasoningArrays.length > 1 ? coerceSecondary(reasoningArrays[1]) : [];
+      if (primary.length > 0 || secondary.length > 0) {
+        shortlistBlock = { blockId, shortlist: { primary, secondary } };
+      }
+    }
+    applyExtracted(ex, shortlistBlock);
+  }
+
+  function finishRun(data: CollectedData): void {
+    const blocks = data.shortlistBlocks;
+    const last = blocks.length > 0 ? blocks[blocks.length - 1].shortlist : null;
+    if (!last || (last.primary.length === 0 && last.secondary.length === 0)) {
+      setError('The pipeline finished without a keyword shortlist. Please try again.');
+      setStatus('failed');
+      return;
+    }
+    setResult({
+      primary: last.primary,
+      secondary: last.secondary,
+      warning: data.warning,
+      warningType: data.warningType,
+    });
+    setStatus('complete');
+  }
+
+  // Final event: `data.output` is keyed by blockId; each block value carries
+  // result / primary / secondary / scores payloads for the 12 selected outputs.
+  function handleFinalOutput(output: Record<string, unknown>): void {
+    const ex: ExtractedData = {};
+    const shortlists: ShortlistBlock[] = [];
+    for (const [blockId, blockValue] of Object.entries(output)) {
+      extractSignals(blockValue, ex);
+      scanWarning(blockValue, ex);
+      const shortlist = extractShortlist(blockValue);
+      if (shortlist) shortlists.push({ blockId, shortlist });
+    }
+    const prev = collectedRef.current;
+    const next = mergeIntoCollected(prev, ex);
+    // Prefer warning info found in the final payload over anything streamed.
+    if (ex.warning) next.warning = ex.warning;
+    if (ex.warningType) next.warningType = ex.warningType;
+    if (shortlists.length > 0) next.shortlistBlocks = shortlists;
+    commitCollected(next);
+    finishRun(next);
+  }
+
+  // Returns true when the event was the final one.
+  function handleEvent(parsed: unknown): boolean {
+    const rec = asRecord(parsed);
+    const dataRec = asRecord(rec.data);
+    if (rec.event === 'final' || dataRec.output !== undefined) {
+      if (dataRec.success === false) {
+        const msg =
+          typeof dataRec.error === 'string' && dataRec.error
+            ? dataRec.error
+            : 'The pipeline reported a failure.';
+        setError(msg);
+        setStatus('failed');
+        return true;
+      }
+      handleFinalOutput(asRecord(dataRec.output));
+      return true;
+    }
+    const blockId = typeof rec.blockId === 'string' ? rec.blockId : '';
+    const chunk = typeof rec.chunk === 'string' ? rec.chunk : '';
+    if (blockId && chunk) handleChunk(blockId, chunk);
+    return false;
+  }
+
+  async function runResearch(runInputs: RunInputs): Promise<void> {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-
-    setInputs(runInputs);
+    chunkBuffersRef.current = new Map();
+    savedRef.current = false;
+    collectedRef.current = emptyCollected();
+    setCollected(collectedRef.current);
     setResult(null);
     setError(null);
-    setCollected(emptyCollected());
-    setStages({ ...INITIAL_STAGES, variants: 'active' });
+    setInputs(runInputs);
     setStatus('initializing');
-
     try {
       const initRes = await fetch('/api/keyword-research/init', {
         method: 'POST',
@@ -665,11 +707,12 @@ export default function KeywordResearchClient() {
         const text = await initRes.text().catch(() => '');
         throw new Error(text || 'Could not start the research run.');
       }
-      const initData = (await initRes.json()) as { token?: string };
-      if (!initData.token) throw new Error('The server did not issue a stream token.');
+      const initData = (await initRes.json()) as { token?: unknown };
+      const token = typeof initData.token === 'string' ? initData.token : '';
+      if (!token) throw new Error('Could not start the research run.');
 
       setStatus('streaming');
-      const streamRes = await fetch(`/api/keyword-research/stream/${initData.token}`, {
+      const streamRes = await fetch(`/api/keyword-research/stream/${token}`, {
         signal: controller.signal,
       });
       if (!streamRes.ok || !streamRes.body) {
@@ -680,103 +723,142 @@ export default function KeywordResearchClient() {
       const reader = streamRes.body.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = '';
-      let chunkText = '';
-      let latest = emptyCollected();
-
-      const applyEvent = (extracted: ExtractedData): void => {
-        latest = applyExtracted(latest, extracted);
-        setCollected(latest);
-        setStages(computeStages(latest, false));
-      };
-
+      let sawFinal = false;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() ?? '';
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line.startsWith('data:')) continue;
-          const payload = line.slice(5).trim();
-          if (!payload || payload === '[DONE]') continue;
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(payload);
-          } catch {
-            continue;
+        let idx = sseBuffer.indexOf('\n');
+        while (idx >= 0) {
+          const line = sseBuffer.slice(0, idx).trim();
+          sseBuffer = sseBuffer.slice(idx + 1);
+          if (line.startsWith('data:')) {
+            const payload = line.slice(5).trim();
+            if (payload && payload !== '[DONE]') {
+              try {
+                const parsedEvent: unknown = JSON.parse(payload);
+                if (handleEvent(parsedEvent)) sawFinal = true;
+              } catch {
+                // Skip non-JSON SSE lines.
+              }
+            }
           }
-          const rec = asRecord(parsed);
-          const chunk =
-            typeof rec.chunk === 'string'
-              ? rec.chunk
-              : typeof rec.content === 'string'
-                ? rec.content
-                : null;
-          if (chunk !== null) {
-            chunkText += chunk;
-            const extracted: ExtractedData = {};
-            processChunkBuffer(chunkText, extracted);
-            applyEvent(extracted);
-            continue;
-          }
-          const extracted: ExtractedData = {};
-          extractSignals(rec.output ?? rec.outputs ?? rec, extracted);
-          applyEvent(extracted);
+          idx = sseBuffer.indexOf('\n');
         }
       }
-
-      const shortlist =
-        latest.shortlists.length > 0 ? latest.shortlists[latest.shortlists.length - 1] : null;
-      if (!shortlist || (shortlist.primary.length === 0 && shortlist.secondary.length === 0)) {
-        throw new Error('The pipeline finished without returning a keyword shortlist.');
+      if (!sawFinal) {
+        // The stream ended without an explicit final event: finish with what we
+        // collected from the chunks.
+        finishRun(collectedRef.current);
       }
-
-      const finalResult: ResultPayload = {
-        primary: shortlist.primary,
-        secondary: shortlist.secondary,
-        warning: latest.warning,
-        warningType: latest.warningType,
-      };
-      setCollected(latest);
-      setResult(finalResult);
-      setStages({ ...ALL_DONE_STAGES });
-      setStatus('complete');
-      void saveRun(runInputs, finalResult, latest);
     } catch (err) {
       if (controller.signal.aborted) return;
+      const message =
+        err instanceof Error && err.message ? err.message : 'The research run failed unexpectedly.';
+      setError(message);
       setStatus('failed');
-      setError(
-        err instanceof Error && err.message ? err.message : 'The research run failed unexpectedly.'
-      );
     }
   }
 
-  function handleRetry(): void {
-    if (inputs) void startRun(inputs);
-  }
+  // Persist completed runs so the History tab can restore every pipeline section.
+  useEffect(() => {
+    if (status !== 'complete' || !result || !inputs || savedRef.current) return;
+    savedRef.current = true;
+    const data = collectedRef.current;
+    const output: SavedRunOutput = {
+      primary: result.primary,
+      secondary: result.secondary,
+      warning: result.warning ?? null,
+      warningType: result.warningType ?? null,
+      allKeywords: data.allKeywords,
+      variants: data.variants,
+      urls: mergeUrlLists(data.selectedUrls, data.semrushGroups),
+      serpResults: data.serpResults,
+      normalizedKeywords: data.normalizedKeywords,
+      compositeCandidates: data.compositeCandidates,
+      alignmentScores: data.alignmentScores,
+    };
+    void fetch('/api/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tool: 'keyword-research',
+        label: inputs.keyword,
+        status: 'completed',
+        inputs,
+        output,
+      }),
+    }).catch(() => undefined);
+  }, [status, result, inputs]);
 
-  const loading = status === 'initializing' || status === 'streaming';
+  const stages = useMemo<Record<Stage, StageStatus>>(() => {
+    if (status === 'complete') return ALL_DONE_STAGES;
+    if (status === 'idle') return INITIAL_STAGES;
+    const doneMap: Record<Stage, boolean> = {
+      variants: collected.variants.length > 0,
+      search: collected.serpResults.length > 0,
+      url_scoring: collected.selectedUrls.length > 0,
+      semrush: collected.semrushGroups.length > 0,
+      analysis: collected.normalizedKeywords.length > 0 || collected.alignmentScores.length > 0,
+      scoring: collected.compositeCandidates.length > 0 || collected.shortlistBlocks.length > 0,
+      validation: false,
+    };
+    const out = {} as Record<Stage, StageStatus>;
+    let activeAssigned = false;
+    for (const stage of STAGE_ORDER) {
+      if (doneMap[stage]) {
+        out[stage] = 'done';
+      } else if (!activeAssigned) {
+        out[stage] = 'active';
+        activeAssigned = true;
+      } else {
+        out[stage] = 'pending';
+      }
+    }
+    return out;
+  }, [status, collected]);
+
+  const mergedUrls = useMemo(
+    () => mergeUrlLists(collected.selectedUrls, collected.semrushGroups),
+    [collected]
+  );
+
+  const primaryCandidates = useMemo(() => {
+    const lens = collected.shortlistBlocks.map((b) => b.shortlist.primary.length);
+    return lens.length > 0 ? Math.max(...lens) : null;
+  }, [collected]);
+
+  const secondaryCandidates = useMemo(() => {
+    const lens = collected.shortlistBlocks.map((b) => b.shortlist.secondary.length);
+    return lens.length > 0 ? Math.max(...lens) : null;
+  }, [collected]);
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Keyword Research Agent</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Keyword Research</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Expand a seed keyword into a validated, competitor-backed shortlist \u2014 streamed live as
-            the pipeline runs.
+            Expand a seed keyword into a validated, competitor-backed shortlist streamed live from
+            the research pipeline.
           </p>
         </div>
         <SemrushBalanceWidget />
       </header>
 
-      <ResearchForm onSubmit={(runInputs) => void startRun(runInputs)} loading={loading} />
+      <ResearchForm onSubmit={(i) => void runResearch(i)} loading={running} />
 
-      {status === 'failed' && error && <ErrorCard message={error} onRetry={handleRetry} />}
-
-      {(loading || status === 'complete') && (
+      {status !== 'idle' && status !== 'failed' && (
         <ProgressTracker stages={stages} variants={collected.variants} />
+      )}
+
+      {status === 'failed' && error && (
+        <ErrorCard
+          message={error}
+          onRetry={() => {
+            if (inputs) void runResearch(inputs);
+          }}
+        />
       )}
 
       {status === 'complete' && result && inputs && (
@@ -785,29 +867,35 @@ export default function KeywordResearchClient() {
           inputs={inputs}
           allKeywords={collected.allKeywords}
           variants={collected.variants}
-          competitorUrls={collected.mergedUrls.length > 0 ? collected.mergedUrls : collected.selectedUrls}
+          competitorUrls={mergedUrls}
           serpResults={collected.serpResults}
           normalizedKeywords={collected.normalizedKeywords}
           compositeCandidates={collected.compositeCandidates}
           alignmentScores={collected.alignmentScores}
-          onResultChange={(next) => setResult(next)}
+          primaryCandidates={primaryCandidates}
+          secondaryCandidates={secondaryCandidates}
+          onResultChange={(r) => setResult(r)}
         />
       )}
 
-      {status !== 'idle' && status !== 'failed' && (
-        <>
-          <QueryVariantsPanel variants={collected.variants} />
-          <SerpResultsPanel results={collected.serpResults} />
-          <CompetitorUrlsPanel urls={collected.selectedUrls} />
-          <SemrushKeywordsPanel
-            urls={collected.mergedUrls.length > 0 ? collected.mergedUrls : collected.selectedUrls}
-          />
-          <DedupKeywordsPanel keywords={collected.normalizedKeywords} />
-          <CompositeScoringPanel candidates={collected.compositeCandidates} />
-          <AlignmentScoresPanel scores={collected.alignmentScores} />
-          <SourceKeywordsPanel keywords={collected.allKeywords} />
-        </>
+      {status === 'complete' && collected.variants.length > 0 && (
+        <QueryVariantsPanel variants={collected.variants} />
       )}
+      {collected.serpResults.length > 0 && <SerpResultsPanel results={collected.serpResults} />}
+      {collected.selectedUrls.length > 0 && <CompetitorUrlsPanel urls={collected.selectedUrls} />}
+      {mergedUrls.some((u) => (u.keywordsFound?.length ?? 0) > 0) && (
+        <SemrushKeywordsPanel urls={mergedUrls} />
+      )}
+      {collected.normalizedKeywords.length > 0 && (
+        <DedupKeywordsPanel keywords={collected.normalizedKeywords} />
+      )}
+      {collected.compositeCandidates.length > 0 && (
+        <CompositeScoringPanel candidates={collected.compositeCandidates} />
+      )}
+      {collected.alignmentScores.length > 0 && (
+        <AlignmentScoresPanel scores={collected.alignmentScores} />
+      )}
+      {collected.allKeywords.length > 0 && <SourceKeywordsPanel keywords={collected.allKeywords} />}
     </main>
   );
 }

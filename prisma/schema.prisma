@@ -1,3 +1,4 @@
+// **NOTE: dont remove updatedAt in any tables **
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,6 +17,4 @@ model ResearchRun {
   output    Json
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
-
-  @@index([tool, createdAt])
 }
